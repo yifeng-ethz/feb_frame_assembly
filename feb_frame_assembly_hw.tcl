@@ -16,7 +16,7 @@ package require -exact qsys 16.1
 # 
 set_module_property DESCRIPTION "This IP is generates the Mu3e standard data frame given input of sub-frames."
 set_module_property NAME feb_frame_assembly
-set_module_property VERSION 24.0.1031
+set_module_property VERSION 24.0.1204
 set_module_property INTERNAL false
 set_module_property OPAQUE_ADDRESS_MAP true
 set_module_property GROUP "Mu3e Data Plane/Modules"
@@ -37,8 +37,13 @@ set_fileset_property QUARTUS_SYNTH TOP_LEVEL feb_frame_assembly
 set_fileset_property QUARTUS_SYNTH ENABLE_RELATIVE_INCLUDE_PATHS false
 set_fileset_property QUARTUS_SYNTH ENABLE_FILE_OVERWRITE_MODE false
 add_fileset_file feb_frame_assembly.vhd VHDL PATH feb_frame_assembly.vhd TOP_LEVEL_FILE
+# the sub frame fifos 
 add_fileset_file alt_dcfifo_w40d256.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256.vhd
+# the sync gts (d->x)
 add_fileset_file alt_dcfifo_w48d4.vhd VHDL PATH alt_fifos/alt_dcfifo_w48d4/alt_dcfifo_w48d4.vhd
+# the log fifo 
+add_fileset_file alt_scfifo_w40d8.vhd VHDL PATH alt_fifos/alt_scfifo_w40d8/alt_scfifo_w40d8.vhd
+# the main frame fifo
 add_fileset_file main_fifo.vhd VHDL PATH alt_fifos/main_fifo/main_fifo.vhd
 
 # 
@@ -72,7 +77,7 @@ add_interface hit_type2_0 avalon_streaming end
 set_interface_property hit_type2_0 associatedClock datapath_clock
 set_interface_property hit_type2_0 associatedReset datapath_reset
 set_interface_property hit_type2_0 dataBitsPerSymbol 36
-set_interface_property hit_type2_0 errorDescriptor ""
+set_interface_property hit_type2_0 errorDescriptor {"tsglitcherr"}
 set_interface_property hit_type2_0 firstSymbolInHighOrderBits true
 set_interface_property hit_type2_0 maxChannel 15
 set_interface_property hit_type2_0 readyLatency 0
@@ -88,6 +93,7 @@ add_interface_port hit_type2_0 asi_hit_type2_0_endofpacket endofpacket Input 1
 add_interface_port hit_type2_0 asi_hit_type2_0_data data Input 36
 add_interface_port hit_type2_0 asi_hit_type2_0_valid valid Input 1
 add_interface_port hit_type2_0 asi_hit_type2_0_ready ready Output 1
+add_interface_port hit_type2_0 asi_hit_type2_0_error error Input 1
 
 
 # 
@@ -97,7 +103,7 @@ add_interface hit_type2_1 avalon_streaming end
 set_interface_property hit_type2_1 associatedClock datapath_clock
 set_interface_property hit_type2_1 associatedReset datapath_reset
 set_interface_property hit_type2_1 dataBitsPerSymbol 36
-set_interface_property hit_type2_1 errorDescriptor ""
+set_interface_property hit_type2_1 errorDescriptor {"tsglitcherr"}
 set_interface_property hit_type2_1 firstSymbolInHighOrderBits true
 set_interface_property hit_type2_1 maxChannel 15
 set_interface_property hit_type2_1 readyLatency 0
@@ -113,6 +119,7 @@ add_interface_port hit_type2_1 asi_hit_type2_1_endofpacket endofpacket Input 1
 add_interface_port hit_type2_1 asi_hit_type2_1_data data Input 36
 add_interface_port hit_type2_1 asi_hit_type2_1_valid valid Input 1
 add_interface_port hit_type2_1 asi_hit_type2_1_ready ready Output 1
+add_interface_port hit_type2_1 asi_hit_type2_1_error error Input 1
 
 
 # 
@@ -122,7 +129,7 @@ add_interface hit_type2_2 avalon_streaming end
 set_interface_property hit_type2_2 associatedClock datapath_clock
 set_interface_property hit_type2_2 associatedReset datapath_reset
 set_interface_property hit_type2_2 dataBitsPerSymbol 36
-set_interface_property hit_type2_2 errorDescriptor ""
+set_interface_property hit_type2_2 errorDescriptor {"tsglitcherr"}
 set_interface_property hit_type2_2 firstSymbolInHighOrderBits true
 set_interface_property hit_type2_2 maxChannel 15
 set_interface_property hit_type2_2 readyLatency 0
@@ -138,6 +145,7 @@ add_interface_port hit_type2_2 asi_hit_type2_2_endofpacket endofpacket Input 1
 add_interface_port hit_type2_2 asi_hit_type2_2_data data Input 36
 add_interface_port hit_type2_2 asi_hit_type2_2_valid valid Input 1
 add_interface_port hit_type2_2 asi_hit_type2_2_ready ready Output 1
+add_interface_port hit_type2_2 asi_hit_type2_2_error error Input 1
 
 
 # 
@@ -147,7 +155,7 @@ add_interface hit_type2_3 avalon_streaming end
 set_interface_property hit_type2_3 associatedClock datapath_clock
 set_interface_property hit_type2_3 associatedReset datapath_reset
 set_interface_property hit_type2_3 dataBitsPerSymbol 36
-set_interface_property hit_type2_3 errorDescriptor ""
+set_interface_property hit_type2_3 errorDescriptor {"tsglitcherr"}
 set_interface_property hit_type2_3 firstSymbolInHighOrderBits true
 set_interface_property hit_type2_3 maxChannel 15
 set_interface_property hit_type2_3 readyLatency 0
@@ -163,6 +171,7 @@ add_interface_port hit_type2_3 asi_hit_type2_3_endofpacket endofpacket Input 1
 add_interface_port hit_type2_3 asi_hit_type2_3_data data Input 36
 add_interface_port hit_type2_3 asi_hit_type2_3_valid valid Input 1
 add_interface_port hit_type2_3 asi_hit_type2_3_ready ready Output 1
+add_interface_port hit_type2_3 asi_hit_type2_3_error error Input 1
 
 
 # 

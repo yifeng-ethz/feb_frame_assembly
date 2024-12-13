@@ -50,6 +50,7 @@ port (
 	-- 2) hit: [31:0]=specbook MuTRiG hit format
 	asi_hit_type2_0_valid			: in  std_logic;
 	asi_hit_type2_0_ready			: out std_logic;
+    asi_hit_type2_0_error			: in  std_logic; -- {tsglitcherr}
     
 	-- AVST <hit_type2_1>
 	asi_hit_type2_1_channel			: in  std_logic_vector(3 downto 0); -- max_channel=15
@@ -58,6 +59,7 @@ port (
 	asi_hit_type2_1_data			: in  std_logic_vector(35 downto 0); -- [35:32] byte_is_k: "0001"=sub-header. "0000"=hit.
 	asi_hit_type2_1_valid			: in  std_logic;
 	asi_hit_type2_1_ready			: out std_logic;
+    asi_hit_type2_1_error			: in  std_logic; -- {tsglitcherr}
     
 	-- AVST <hit_type2_2>
 	asi_hit_type2_2_channel			: in  std_logic_vector(3 downto 0); -- max_channel=15
@@ -66,6 +68,7 @@ port (
 	asi_hit_type2_2_data			: in  std_logic_vector(35 downto 0); -- [35:32] byte_is_k: "0001"=sub-header. "0000"=hit.
 	asi_hit_type2_2_valid			: in  std_logic;
 	asi_hit_type2_2_ready			: out std_logic;
+    asi_hit_type2_2_error			: in  std_logic; -- {tsglitcherr}
     
 	-- AVST <hit_type2_3>
 	asi_hit_type2_3_channel			: in  std_logic_vector(3 downto 0); -- max_channel=15
@@ -74,6 +77,7 @@ port (
 	asi_hit_type2_3_data			: in  std_logic_vector(35 downto 0); -- [35:32] byte_is_k: "0001"=sub-header. "0000"=hit.
 	asi_hit_type2_3_valid			: in  std_logic;
 	asi_hit_type2_3_ready			: out std_logic;
+    asi_hit_type2_3_error			: in  std_logic; -- {tsglitcherr}
     
     
     
@@ -157,7 +161,7 @@ architecture rtl of feb_frame_assembly is
 	-- constants
 	constant SUB_FIFO_DATA_WIDTH			: natural := 40;
 	constant SUB_FIFO_USEDW_WIDTH			: natural := 9; -- used one more bit for it
-	constant SUB_FIFO_DEPTH					: natural := 256;
+	constant SUB_FIFO_DEPTH					: natural := 256; -- does not overflow at 960kHz/ch (fillness < 220)
 	constant SUB_FIFO_SOP_LOC				: natural := 37;
 	constant SUB_FIFO_EOP_LOC				: natural := 36;
 	
@@ -180,7 +184,7 @@ architecture rtl of feb_frame_assembly is
 	signal sub_fifos				: sub_fifos_t;
 	
 	-- declaration
-	component alt_dcfifo_w40d256
+	component alt_dcfifo_w40d256 
 	PORT
 	(
 		data		: IN STD_LOGIC_VECTOR (SUB_FIFO_DATA_WIDTH-1 DOWNTO 0);
@@ -317,6 +321,13 @@ architecture rtl of feb_frame_assembly is
     signal header_generated             : std_logic;
     signal subfifo_msg                  : subfifo_msg_t;
     signal trailer_generated            : std_logic;
+    
+    type main_fifo_log_t is record 
+        subheader_cnt                   : unsigned(15 downto 0);
+        hit_cnt                         : unsigned(15 downto 0);
+    end record;
+    signal main_fifo_log                : main_fifo_log_t;
+   
 	
 	
 	-- ----------------------------------------------
@@ -396,6 +407,31 @@ architecture rtl of feb_frame_assembly is
     signal x_run_state_cmd					: run_state_t;
     
     -- -------------------------------
+    -- debug_header_fifo
+    -- -------------------------------
+    constant DEBUG_HEADER_FIFO_DATA_W       : natural := 40;
+    constant DEBUG_HEADER_FIFO_USEDW_W      : natural := 3;
+    component alt_scfifo_w40d8
+	port (
+		clock		: in  std_logic;
+		data		: in  std_logic_vector (DEBUG_HEADER_FIFO_DATA_W-1 downto 0);
+		rdreq		: in  std_logic;
+		sclr		: in  std_logic;
+		wrreq		: in  std_logic;
+		empty		: out std_logic;
+		full		: out std_logic;
+		q		    : out std_logic_vector (DEBUG_HEADER_FIFO_DATA_W-1 downto 0);
+		usedw		: out std_logic_vector (DEBUG_HEADER_FIFO_USEDW_W-1 downto 0)
+	);
+    end component;
+    -- port signals
+    signal header_fifo_wrreq                : std_logic;
+    signal header_fifo_rdreq                : std_logic;
+    signal header_fifo_sclr                 : std_logic;
+    signal header_fifo_data                 : std_logic_vector(DEBUG_HEADER_FIFO_DATA_W-1 downto 0);
+    signal header_fifo_q                    : std_logic_vector(DEBUG_HEADER_FIFO_DATA_W-1 downto 0);
+    
+    -- -------------------------------
     -- dout_assembler (xcvr)
     -- -------------------------------
     type dout_assembler_t is (IDLE,TRANSMISSION,RESET);
@@ -407,20 +443,22 @@ architecture rtl of feb_frame_assembly is
     signal read_frame_cnt                       : unsigned(35 downto 0);
     -- sync stage
     component alt_dcfifo_w48d4
-	PORT (
-		aclr		: IN  STD_LOGIC  := '0';
-		data		: IN  STD_LOGIC_VECTOR (47 DOWNTO 0);
-		rdclk		: IN  STD_LOGIC;
-		rdreq		: IN  STD_LOGIC;
-		wrclk		: IN  STD_LOGIC;
-		wrreq		: IN  STD_LOGIC;
-		q		    : OUT STD_LOGIC_VECTOR (47 DOWNTO 0);
-		rdempty		: OUT STD_LOGIC;
-		wrfull		: OUT STD_LOGIC 
+	port (
+		aclr		: in  std_logic  := '0';
+		data		: in  std_logic_vector (47 downto 0);
+		rdclk		: in  std_logic;
+		rdreq		: in  std_logic;
+		wrclk		: in  std_logic;
+		wrreq		: in  std_logic;
+		q		    : out std_logic_vector (47 downto 0);
+		rdempty		: out std_logic;
+		wrfull		: out std_logic 
 	);
     end component;
     -- port signals
     signal gts_sync_fifo_q                      : std_logic_vector(47 downto 0);
+    signal dout_pad_flow                        : unsigned(15 downto 0); -- should be longer than TRANSMISSION period, otherwise overflow and trigger a read which consume the log fifo wrongly.
+                                                                         -- note: equal or larger than MAIN_FIFO_USEDW_WIDTH is enough 
     
 	
 begin
@@ -432,7 +470,7 @@ begin
         if (rising_edge(i_clk_datapath)) then 
             if (i_rst_datapath = '1') then 
                 csr.feb_type        <= "111000"; -- scifi
-                csr.feb_id          <= (others => '0');
+                csr.feb_id          <= std_logic_vector(to_unsigned(2,csr.feb_id'length)); 
             else 
                 avs_csr_waitrequest     <= '1';
                 avs_csr_readdata        <= (others => '0');
@@ -440,17 +478,28 @@ begin
                 -- ============================ read ================================
                     avs_csr_waitrequest     <= '0';
                     case to_integer(unsigned(avs_csr_address)) is
+                        -- capability
                         when 0 => 
                             avs_csr_readdata(csr.feb_type'high downto 0)        <= csr.feb_type;
+                        -- configuration 
                         when 1 => 
                             avs_csr_readdata(csr.feb_id'high downto 0)          <= csr.feb_id;
-                        when 2 => 
+                        -- debug counters 
+                        -- high 16 bit + low 32 bit. 
+                        when 2 => -- declared - high
+                            avs_csr_readdata(15 downto 0)        <= std_logic_vector(declared_hit_cnt_all(47 downto 32));
+                        when 3 => -- declared - low
                             avs_csr_readdata        <= std_logic_vector(declared_hit_cnt_all(31 downto 0));
-                        when 3 => 
+                        when 4 => -- actual - high
+                            avs_csr_readdata(15 downto 0)        <= std_logic_vector(actual_hit_cnt_all(47 downto 32));
+                        when 5 => -- actual - low
                             avs_csr_readdata        <= std_logic_vector(actual_hit_cnt_all(31 downto 0));
-                        when 4 => 
+                        when 6 => -- missing - high
+                            avs_csr_readdata(15 downto 0)        <= std_logic_vector(missing_hit_cnt_all(47 downto 32));
+                        when 7 => -- missing - low
                             avs_csr_readdata        <= std_logic_vector(missing_hit_cnt_all(31 downto 0));
-                        when 5 =>
+                            
+                        when 8 => 
                             avs_csr_readdata        <= std_logic_vector(frame_cnt(31 downto 0)); -- TODO: handle CDC
                         when others =>
                             null;
@@ -482,18 +531,18 @@ begin
         -- sum subfifo write side statistics
         -- -------------------------------------
         declared_hit_cnt_all            <= (others => '0');
-        for i in 0 to INTERLEAVING_FACTOR-2 loop
-            declared_hit_cnt_all        <= debug_msg.declared_hit_cnt(i) + debug_msg.declared_hit_cnt(i+1); 
+        for i in 0 to INTERLEAVING_FACTOR-1 loop
+            declared_hit_cnt_all        <= declared_hit_cnt_all + debug_msg.declared_hit_cnt(i); 
         end loop;
         
         actual_hit_cnt_all              <= (others => '0');
-        for i in 0 to INTERLEAVING_FACTOR-2 loop
-            actual_hit_cnt_all          <= debug_msg.actual_hit_cnt(i) + debug_msg.actual_hit_cnt(i+1); 
+        for i in 0 to INTERLEAVING_FACTOR-1 loop
+            actual_hit_cnt_all          <= actual_hit_cnt_all + debug_msg.actual_hit_cnt(i); 
         end loop;
         
         missing_hit_cnt_all             <= (others => '0');
-        for i in 0 to INTERLEAVING_FACTOR-2 loop
-            missing_hit_cnt_all         <= debug_msg.missing_hit_cnt(i) + debug_msg.missing_hit_cnt(i+1); 
+        for i in 0 to INTERLEAVING_FACTOR-1 loop
+            missing_hit_cnt_all         <= missing_hit_cnt_all + debug_msg.missing_hit_cnt(i); 
         end loop;
 
     
@@ -592,7 +641,14 @@ begin
     -- -> mask the subframe if the sub_fifo is full (do not do this, instead dequeue the oldest subframe in the front)
 	
 	gen_sub_fifo_write_logic : for i in 0 to INTERLEAVING_FACTOR-1 generate 
-		-- ** sequential **
+		-- 3 counters to log on the subfifo write side
+        -- ----------------------------------------------------
+        -- decleared hit count: 
+        --                          the number of hits decleared by the subheaders
+        -- actual hit count:
+        --                          the number of hits actually written to the subfifo. (we lose hit because 1) subheader was masked or 2) subfifo overflow during TRANSMISSION.)
+        -- missing hit count:
+        --                          the number of hits missing during 
 		proc_sub_fifo_write : process (i_clk_datapath, i_rst_datapath) 
 		begin
 			if (rising_edge(i_clk_datapath)) then 
@@ -602,31 +658,6 @@ begin
 				else 
 					case subfifo_trans_status(i) is 
 						when IDLE =>
---                            -- trigger condition: subheader
---                            if (word_is_subheader(i) = '1') then 
---                                -- here we check if the subframe fits into the subfifo or not
---                                if (fifo_free_space_check(to_integer(unsigned(subheader_hit_cnt_comb(i))), to_integer(unsigned(sub_fifos(i).wrusedw)), SUB_FIFO_DEPTH)) then 
---                                    -- 1) yes, incoming subframe fits
---                                    debug_msg.declared_hit_cnt(i)	<= debug_msg.declared_hit_cnt(i) + unsigned(subheader_hit_cnt_comb(i)); -- record the declared hit count
---                                    subheader_hit_cnt(i)			<= subheader_hit_cnt_comb(i); -- record for this subframe period
---                                    -- here we check if this frame is empty or not 
---                                    if (word_is_subtrailer(i) = '1') then -- not hit in this subframe
---                                        -- 1) subheader-only, no hits
---                                        subfifo_trans_status(i)		<= IDLE; -- go back to idle
---                                    else 
---                                        -- 2) hits >= 1
---                                        subfifo_trans_status(i)		<= TRANSMISSION; -- go to collect hits
---                                    end if;
---                                    
---                                else 
---                                    -- 2) no, incoming subframe does not fit    
---                                    subfifo_trans_status(i)		<= MASKED; -- request to pop subframe in the front 
---                                end if;
---                            end if;
-                            
-                        
-                        
-                        
 							if (word_is_subheader(i) = '1') then
 								if (sub_fifos(i).wrfull = '0') then -- subheader gets in the fifo
 									debug_msg.declared_hit_cnt(i)	<= debug_msg.declared_hit_cnt(i) + unsigned(subheader_hit_cnt_comb(i)); -- record the declared hit count
@@ -640,14 +671,14 @@ begin
 								else -- subheader not in the fifo (because it is currently full) mask the subsequent hits until the next subheader
 									subfifo_trans_status(i)		<= MASKED;
 								end if;
-							end if;
-                        
-                            
-                            
-                            
+							end if;  
 						when TRANSMISSION =>
 							if (sub_fifos(i).wrreq = '1') then -- hits gets write to fifo
-								debug_msg.actual_hit_cnt(i)		<= debug_msg.actual_hit_cnt(i) + 1; -- incr actual hit counter
+                                if (sub_fifos(i).wrfull = '0') then -- ok 
+                                    debug_msg.actual_hit_cnt(i)		<= debug_msg.actual_hit_cnt(i) + 1; -- incr actual hit counter
+                                else -- overflow (fifo ov protection : enabled)
+                                    debug_msg.missing_hit_cnt(i)	<= debug_msg.missing_hit_cnt(i) + 1; -- incr missing hit counter (2)
+                                end if;
 							end if;
 							if (word_is_subtrailer(i) = '1') then -- go back to idle when eop of this subframe is seen
 								subfifo_trans_status(i)		<= IDLE;
@@ -658,9 +689,11 @@ begin
 								if (avst_inputs(i).endofpacket = '1') then -- go back to idle, end of subframe transaction
 									subfifo_trans_status(i)		<= IDLE;
 									subheader_hit_cnt(i)		<= (others => '0');
+                                    -- record for a missing packet
+                                    --debug_msg.missing_subpkt_cnt(i)     <= debug_msg.missing_subpkt_cnt(i) + 1;
 								end if;
-								-- record what is missing
-								debug_msg.missing_hit_cnt(i)	<= debug_msg.missing_hit_cnt(i) + 1;
+								-- record for a missing hit
+								debug_msg.missing_hit_cnt(i)	<= debug_msg.missing_hit_cnt(i) + 1; -- incr missing hit counter (1)
 							end if;
 						when RESET =>
                             subfifo_trans_status(i)             <= IDLE;
@@ -854,7 +887,7 @@ begin
     end process;
 	
 	
-	-- ** helpers **
+	-- ## helpers ##
 	gen_helpers_xcvr : for i in 0 to INTERLEAVING_FACTOR-1 generate 
 		proc_word_is_subheader_xcvr : process (all)
 		begin
@@ -937,7 +970,7 @@ begin
 	-- ------------------------------------------------------------------------
 	-- main_fifo_write_logic (storing Mu3e data frame) (show-ahead mode)
 	-- ------------------------------------------------------------------------
-	-- ** instantiation **
+	
 	main_frame_fifo : main_fifo PORT MAP (
 		-- clock
 		clock	 => i_clk_xcvr,
@@ -954,7 +987,7 @@ begin
 		usedw	 => main_fifo_usedw
 	);
 	
-	-- ** sequential **
+	
     -- =============
     -- header           ---> 1)
     -- -------------
@@ -979,6 +1012,8 @@ begin
 				-- default
 				main_fifo_wr_data			<= (others => '0');
                 main_fifo_wr_valid		    <= '0';
+                header_fifo_data            <= (others => '0');
+                header_fifo_wrreq           <= '0';
                 
 				case main_fifo_wr_status is
                     -- 0)
@@ -1007,7 +1042,6 @@ begin
                     -- 1) frame header
 					when START_OF_FRAME => -- [preamp + 2 header + 2 debug_header]
                         sof_flow		<= sof_flow + 1;
-                        
 						case to_integer(sof_flow) is 
 							when 0 => -- preamble
 								main_fifo_wr_data(35 downto 32)		<= "0001";
@@ -1016,16 +1050,31 @@ begin
 								main_fifo_wr_data(7 downto 0)		<= K285;
 								main_fifo_wr_valid					<= '1';
 							when 1 => -- data header 0
-								main_fifo_wr_data(31 downto 0)		<= gts_8n_in_transmission(47 downto 16);
+                                      -- ts [47:16]
+								main_fifo_wr_data(31 downto 0)		<= gts_8n_in_transmission(47 downto 16); -- header ts : only 47:12 is only. 11:0 here are "0"s. 
 								main_fifo_wr_valid					<= '1';
 							when 2 => -- data header 1
-								main_fifo_wr_data(31 downto 16)		<= gts_8n_in_transmission(15 downto 0);
-								main_fifo_wr_data(15 downto 0)		<= std_logic_vector(frame_cnt)(15 downto 0);
+                                      -- ts [15:0] | package count [15:0]
+								main_fifo_wr_data(31 downto 28)		<= gts_8n_in_transmission(15 downto 12); -- gts[47:12] (frame_cnt) : leading gts for this frame. while subframe contains gts[11:4], hits contains gts[3:0]
+								main_fifo_wr_data(27 downto 16)     <= (others => '0'); -- explicitly zeros (gts_8n_in_transmission is reference for its subheader and hits ts) 
+                                                                                        -- ex: hit ts = gts_8n (ofst to mu3e global start-of-run) + subheader_ts (ofst to h.) + hit_ts (ofst to subh.)
+                                main_fifo_wr_data(15 downto 0)		<= std_logic_vector(frame_cnt)(15 downto 0); -- package_cnt [15:0] : if some main frames are skipped, the frame_cnt might mis-match with the gts_8n lower bits.
+                                                                                                                 -- the up stream needs to log and handle this error. 
+                                                                                                                 -- ex: try to grant more upload bandwidth (limit sc packet bandwidth) to prevent overflow of the main fifo.  
 								main_fifo_wr_valid					<= '1';
 							when 3 => -- debug header 0
-								main_fifo_wr_valid					<= '1'; -- TODO: fill this when read out
-							when 4 => -- debug header 1
-								main_fifo_wr_valid					<= '1'; -- TODO: fill this when read out
+                                      -- 0 | subheader count [14:0] | hit count [15:0]
+                                      -- note: counts are for this main frame 
+								main_fifo_wr_valid					<= '1'; 
+							when 4 => -- debug header 1 
+                                      -- generation time (timestamp of this main frame, loaded into main fifo) 
+                                      -- be careful: read out of main frame is only after eop of this packet is seen
+                                      -- -----------------------------------------------------------------------------------------------------------------------
+                                      -- note: this field should be used as the TTL (Time-To-Live) on IP packet, indicating the life time of a data frame. 
+                                      --       the later stage can, at its own discretion, discard or grant higher priority to this frame based on this info. 
+                                      -- -----------------------------------------------------------------------------------------------------------------------  
+								main_fifo_wr_data(30 downto 0)      <= gts_8n_in_transmission(30 downto 0); -- gts[30:0] : the current running gts (sync from data clock) for a sanity reference only. should be slightly larger than gts[47:12] + 1
+                                main_fifo_wr_valid                  <= '1';
                             when 5 => -- slack state (so the debug header 1 can be written to main fifo)
                                 main_fifo_wr_status					<= IDLE; -- go back to check which lane to read
                                 sof_flow							<= (others => '0');
@@ -1040,11 +1089,16 @@ begin
                         -- escape condition: 
 						if (sub_eop_is_seen = '1') then
 							main_fifo_wr_status		<= LOOK_AROUND; -- must go immediately 
+                            -- log the subheader count in this main frame
+                            main_fifo_log.subheader_cnt     <= main_fifo_log.subheader_cnt + 1;
 						end if;
+                        -- log the hit count in this main frame
+                        if (main_fifo_wrreq = '1' and main_fifo_din(37) = '0') then -- write a hit from subheader (sub fifo -> main fifo)
+                            main_fifo_log.hit_cnt           <= main_fifo_log.hit_cnt + 1;
+                        end if;
                     -- 2.1)
 					when LOOK_AROUND => -- break: if all lane overflew, goto: trailer
                         look_flow     <= look_flow + 1;
-                        
                         -- this state will last 3 cycles, latch/exit when 2. 
                         -- reason: after rdack, wait for the showahead_timestamp (1 cycle) and overflow_flag/eop_all (2 cycles) is settled
                         case to_integer(look_flow) is 
@@ -1060,11 +1114,16 @@ begin
 					when END_OF_FRAME => -- [trailer]
                     -- 2 cycles, write to main_fifo at the 2nd cycle
 						if (insert_trailer_done = '0') then
+                            -- write trailer -> main fifo
 							insert_trailer_done		            <= '1';
 							main_fifo_wr_data(35 downto 32)		<= "0001";
 							main_fifo_wr_data(7 downto 0)		<= K284;
 							main_fifo_wr_valid		            <= '1';
                             trailer_generated                   <= '1';
+                            -- write log -> debug fifo
+                            header_fifo_wrreq                   <= '1';
+                            header_fifo_data(30 downto 16)      <= std_logic_vector(main_fifo_log.subheader_cnt)(14 downto 0); -- truncate out bit 15
+                            header_fifo_data(15 downto 0)       <= std_logic_vector(main_fifo_log.hit_cnt);
                         else 
                             main_fifo_wr_status			        <= RESET;
 						end if;
@@ -1073,9 +1132,11 @@ begin
 						main_fifo_wr_status			<= IDLE;
                         sof_flow					<= (others => '0');
                         look_flow                   <= (others => '0');
-                        --pipe_de2wr.eop_all_ack		<= '0';
                         insert_trailer_done		    <= '0';
                         header_generated            <= '0';
+                        -- clear log
+                        main_fifo_log.subheader_cnt         <= (others => '0');
+                        main_fifo_log.hit_cnt               <= (others => '0');
                         
 					when others =>
 				end case;
@@ -1106,7 +1167,7 @@ begin
 		end if;
 	end process;
 	
-	-- ** combinational **
+	
 	proc_main_fifo_wr_comb : process (all)
 	begin
         -- ---------------------------------
@@ -1196,12 +1257,11 @@ begin
 		end if;
 	end process;
 	
-	-- ** combinational **
 	proc_transmission_timestamp_poster_comb : process (all)
 	begin
-        x_gts_counter                   <= unsigned(gts_sync_fifo_q);
-		gts_8n_in_transmission(11 downto 4)		<= std_logic_vector(x_gts_counter)(11 downto 4); -- 
-		gts_8n_in_transmission(47 downto 12)	<= std_logic_vector(frame_cnt);
+        x_gts_counter                           <= unsigned(gts_sync_fifo_q);
+		gts_8n_in_transmission(11 downto 4)		<= std_logic_vector(x_gts_counter)(11 downto 4); -- this part is for TTL
+		gts_8n_in_transmission(47 downto 12)	<= std_logic_vector(frame_cnt); -- this part is used for main frame timestamp (reference point for its subframe and hits) 
 	end process;
     
     
@@ -1220,7 +1280,8 @@ begin
     -- -----------------------------
     -- dout_assembler
     -- -----------------------------
-    gts_sync_fifo : alt_dcfifo_w48d4 PORT MAP (
+    gts_sync_fifo : alt_dcfifo_w48d4 
+    port map (
         -- write side 
         wrreq	 => '1',
         data	 => std_logic_vector(d_gts_counter), -- 48
@@ -1237,6 +1298,25 @@ begin
     
     
     
+    -- this fifo contains the debug header (subheader count and hit count) written by the main fifo write side at END_OF_FRAME state
+    -- the read side is main fifo read side, which will take this debug header to put it in the offset location during merger is read this frame
+    debug_header_fifo : alt_scfifo_w40d8 
+    port map (
+        -- write side 
+        wrreq		=> header_fifo_wrreq,
+        data		=> header_fifo_data, -- 40 (frame count | hit count)
+        -- read side
+        rdreq		=> header_fifo_rdreq,
+        q		    => header_fifo_q, -- 40 (frame count | hit count)
+        -- control and status
+        sclr		=> header_fifo_sclr,
+        empty		=> open,
+		full		=> open,
+        usedw		=> open, -- 3
+        -- clock 
+		clock		=> i_clk_xcvr
+	);                               
+    
     proc_dout_assembler : process (i_clk_xcvr) 
 	begin
 		if (rising_edge(i_clk_xcvr)) then 
@@ -1250,13 +1330,19 @@ begin
                 --       inducing overflow of the main fifo. 
                 --
                 -- TODO: test the above case.
+                -- default
+                header_fifo_sclr            <= '0';
+                
                 case dout_assembler is 
                     when IDLE =>
                         -- sof is seen
                         if (word_is_header(main_fifo_dout(35 downto 0)) = '1' and aso_hit_type3_valid = '1' and aso_hit_type3_ready = '1') then 
                             dout_assembler      <= TRANSMISSION;
                         end if;
+                        
+                        dout_pad_flow           <= (others => '0');
                     when TRANSMISSION =>
+                    
                         -- wrong: sof is seen -> missing eof -> we need to infer a frame is already sent
                         if (word_is_header(main_fifo_dout(35 downto 0)) = '1' and aso_hit_type3_valid = '1' and aso_hit_type3_ready = '1') then 
                             dout_assembler      <= TRANSMISSION;
@@ -1267,12 +1353,78 @@ begin
                             dout_assembler      <= IDLE;
                             read_frame_cnt      <= read_frame_cnt + 1;
                         end if;
+                        
+                        -- pad debug header 0 at the right time
+                        -- flow counter to sense the offset of this fragment
+                        if (aso_hit_type3_valid = '1' and aso_hit_type3_ready = '1') then 
+                            dout_pad_flow       <= dout_pad_flow + 1;
+                        end if;
+                        
+                        
                     when RESET =>
                         read_frame_cnt      <= (others => '0');
+                        dout_pad_flow       <= (others => '0');
+                        header_fifo_sclr    <= '1';
                         dout_assembler      <= IDLE;
-                    when others => 
+                    when others =>
                         null;
                 end case;
+                -- -------------------------------------
+                -- The main fifo overflow behavior:
+                -- -------------------------------------
+                -- New packet will overwrite the old packet. so on the read side, the eop will not be seen, instead a sop will be seen.
+                -- This above logic can compensate for a partial overwrite condition, such that the read packet count is still keeping track (= write count - 1)
+                -- 
+                -- ---------------
+                -- Side effect:
+                -- ---------------
+                -- But, if the write side has overwritten more than a whole packet, the read side will lose track. This condition is not covered and will result in 
+                -- showing an always hungry behavior to the up stream. After that incidence, the valid is only prevented by the non-empty flag (so no read underflow)
+                -- This will subsequently stop the packet scheduling, such that the upload merger will grant this data packet during this packet is been generated by reading the subfifos.
+                -- which is not compact, creating bubbles in the upload stream. Reducing the upload bandwidth efficiency. 
+                --
+                -- ------------------
+                -- Considerations:
+                -- ------------------
+                -- we do not stop writing even if the main fifo is full. This is to control the delay of the main frames. Otherwise, this datapath with backlog will
+                -- always generate too much delayed frame, which can be a burden to the upstream.
+                --
+                -- ------------------
+                -- read needs to do:
+                -- ------------------
+                -- for error handling, the read side should fill in "header" and "debug word" field of the main frame during reading. 
+                -- Explicitly, it needs to pad 
+                --         1) packet counter with the packet read count, so the upstream can sense missing packets. 
+                --         2) subheader count (get from the write side). it can be less than 256 in case of sub fifo overflow, which will mask incoming packet from ring-cam.
+                --         3) hit count (get from the write side). it is for the upstream to sense a broken packet. 
+                -- 
+                -- ----------------------
+                -- packet scheduling: 
+                -- ----------------------
+                -- Q: what is it?
+                -- A: only a full packet (main frame) is inside the main fifo, the read valid will be asserted. If the upstream merger (dt+sc+rc) uses packet scheduling,
+                --    such behavior will eliminate bubbles in the upstream. 
+                
+                -- ------------------
+                -- Q: a better way?
+                -- ------------------
+                -- A: maybe we can scrollback. 
+                -- for example, in case of main fifo overflow. 
+                --         1) if read has not started, we block read side and free-up the oldest packet inside the main fifo, then continue write until full again. the freeing up needs a chunk movement of the write ptr
+                --            which is only possible with a ram. and need dedicate management of the ptr of the all packet sop location. which is more like a producer-consumer queue
+                --         2) if the read has started, we block the write attemption for its whole period. 
+                --
+                -- A: maybe we can block write.
+                --    this can lead to delay of the main fifo. it is a bad practice overall.
+                -- 
+                -- A: maybe we can clean up / flush the main fifo.
+                --    lead to huge packets loss. bad practice.
+                --
+                -- A: to refine the scrollback proposal.
+                --    1) read not started, we can assert the start freeing up when almost full, until almost full flag is de-asserted and eop is seen. so the write side will not sense overflow.
+                --       the merger will be blocked for read during this freeing up. but once the write is done (as the freeing is non-stop, while write has bubbles) the freeing up process will stop,
+                --       giving the oppotunity for the merger to take over the read.
+                --       However, the merger will only read fraction of all packet. and a lot of packet will be discarded for this mechanism, increasing the hit loss ratio.
                 
             end if;
         end if;
@@ -1288,7 +1440,7 @@ begin
         aso_hit_type3_data              <= (others => '0');
         aso_hit_type3_startofpacket     <= '0';
         aso_hit_type3_endofpacket       <= '0';
-        
+        header_fifo_rdreq               <= '0';
         -- ----------------------
         -- rd side of main fifo
         -- ----------------------
@@ -1313,8 +1465,18 @@ begin
         if (word_is_trailer(main_fifo_dout(35 downto 0)) = '1') then 
             aso_hit_type3_endofpacket       <= '1';
         end if;
+        -- padding data 
+        case to_integer(dout_pad_flow) is 
+            when 2 => -- for debug header 0
+                aso_hit_type3_data(30 downto 0)     <= header_fifo_q(30 downto 0); -- (frame count | hit count)
+                if (aso_hit_type3_valid = '1' and aso_hit_type3_ready = '1') then 
+                    header_fifo_rdreq               <= '1'; -- ack 
+                end if;
+            when others =>
+                null;
+        end case;
 
-    end process;
+end process;
     
     
     
@@ -1372,8 +1534,8 @@ begin
    
     proc_run_control_mgmt_xcvr : process (i_clk_xcvr,i_rst_xcvr)
     begin 
-        if (rising_edge(i_clk_datapath)) then 
-            if (i_rst_datapath = '1') then 
+        if (rising_edge(i_clk_xcvr)) then 
+            if (i_rst_xcvr = '1') then 
                 x_run_state_cmd       <= IDLE;
             else 
                 -- valid
