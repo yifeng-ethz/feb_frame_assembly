@@ -50,10 +50,10 @@ ENTITY alt_dcfifo_w40d256 IS
 		q		: OUT STD_LOGIC_VECTOR (39 DOWNTO 0);
 		rdempty		: OUT STD_LOGIC ;
 		rdfull		: OUT STD_LOGIC ;
-		rdusedw		: OUT STD_LOGIC_VECTOR (8 DOWNTO 0);
+		rdusedw		: OUT STD_LOGIC_VECTOR (9 DOWNTO 0);
 		wrempty		: OUT STD_LOGIC ;
 		wrfull		: OUT STD_LOGIC ;
-		wrusedw		: OUT STD_LOGIC_VECTOR (8 DOWNTO 0)
+		wrusedw		: OUT STD_LOGIC_VECTOR (9 DOWNTO 0)
 	);
 END alt_dcfifo_w40d256;
 
@@ -63,10 +63,10 @@ ARCHITECTURE SYN OF alt_dcfifo_w40d256 IS
 	SIGNAL sub_wire0	: STD_LOGIC_VECTOR (39 DOWNTO 0);
 	SIGNAL sub_wire1	: STD_LOGIC ;
 	SIGNAL sub_wire2	: STD_LOGIC ;
-	SIGNAL sub_wire3	: STD_LOGIC_VECTOR (8 DOWNTO 0);
+	SIGNAL sub_wire3	: STD_LOGIC_VECTOR (9 DOWNTO 0);
 	SIGNAL sub_wire4	: STD_LOGIC ;
 	SIGNAL sub_wire5	: STD_LOGIC ;
-	SIGNAL sub_wire6	: STD_LOGIC_VECTOR (8 DOWNTO 0);
+	SIGNAL sub_wire6	: STD_LOGIC_VECTOR (9 DOWNTO 0);
 
 
 
@@ -95,10 +95,10 @@ ARCHITECTURE SYN OF alt_dcfifo_w40d256 IS
 			q	: OUT STD_LOGIC_VECTOR (39 DOWNTO 0);
 			rdempty	: OUT STD_LOGIC ;
 			rdfull	: OUT STD_LOGIC ;
-			rdusedw	: OUT STD_LOGIC_VECTOR (8 DOWNTO 0);
+			rdusedw	: OUT STD_LOGIC_VECTOR (9 DOWNTO 0);
 			wrempty	: OUT STD_LOGIC ;
 			wrfull	: OUT STD_LOGIC ;
-			wrusedw	: OUT STD_LOGIC_VECTOR (8 DOWNTO 0)
+			wrusedw	: OUT STD_LOGIC_VECTOR (9 DOWNTO 0)
 	);
 	END COMPONENT;
 
@@ -106,21 +106,21 @@ BEGIN
 	q    <= sub_wire0(39 DOWNTO 0);
 	rdempty    <= sub_wire1;
 	rdfull    <= sub_wire2;
-	rdusedw    <= sub_wire3(8 DOWNTO 0);
+	rdusedw    <= sub_wire3(9 DOWNTO 0);
 	wrempty    <= sub_wire4;
 	wrfull    <= sub_wire5;
-	wrusedw    <= sub_wire6(8 DOWNTO 0);
+	wrusedw    <= sub_wire6(9 DOWNTO 0);
 
 	dcfifo_component : dcfifo
 	GENERIC MAP (
 		add_usedw_msb_bit => "ON",
 		intended_device_family => "Arria V",
 		lpm_hint => "RAM_BLOCK_TYPE=M10K",
-		lpm_numwords => 256,
+		lpm_numwords => 512,
 		lpm_showahead => "ON",
 		lpm_type => "dcfifo",
 		lpm_width => 40,
-		lpm_widthu => 9,
+		lpm_widthu => 10,
 		overflow_checking => "ON",
 		rdsync_delaypipe => 4,
 		underflow_checking => "ON",
@@ -155,7 +155,7 @@ END SYN;
 -- Retrieval info: PRIVATE: AlmostFullThr NUMERIC "-1"
 -- Retrieval info: PRIVATE: CLOCKS_ARE_SYNCHRONIZED NUMERIC "0"
 -- Retrieval info: PRIVATE: Clock NUMERIC "4"
--- Retrieval info: PRIVATE: Depth NUMERIC "256"
+-- Retrieval info: PRIVATE: Depth NUMERIC "512"
 -- Retrieval info: PRIVATE: Empty NUMERIC "1"
 -- Retrieval info: PRIVATE: Full NUMERIC "1"
 -- Retrieval info: PRIVATE: INTENDED_DEVICE_FAMILY STRING "Arria V"
@@ -185,11 +185,11 @@ END SYN;
 -- Retrieval info: CONSTANT: ADD_USEDW_MSB_BIT STRING "ON"
 -- Retrieval info: CONSTANT: INTENDED_DEVICE_FAMILY STRING "Arria V"
 -- Retrieval info: CONSTANT: LPM_HINT STRING "RAM_BLOCK_TYPE=M10K"
--- Retrieval info: CONSTANT: LPM_NUMWORDS NUMERIC "256"
+-- Retrieval info: CONSTANT: LPM_NUMWORDS NUMERIC "512"
 -- Retrieval info: CONSTANT: LPM_SHOWAHEAD STRING "ON"
 -- Retrieval info: CONSTANT: LPM_TYPE STRING "dcfifo"
 -- Retrieval info: CONSTANT: LPM_WIDTH NUMERIC "40"
--- Retrieval info: CONSTANT: LPM_WIDTHU NUMERIC "9"
+-- Retrieval info: CONSTANT: LPM_WIDTHU NUMERIC "10"
 -- Retrieval info: CONSTANT: OVERFLOW_CHECKING STRING "ON"
 -- Retrieval info: CONSTANT: RDSYNC_DELAYPIPE NUMERIC "4"
 -- Retrieval info: CONSTANT: UNDERFLOW_CHECKING STRING "ON"
@@ -201,12 +201,12 @@ END SYN;
 -- Retrieval info: USED_PORT: rdempty 0 0 0 0 OUTPUT NODEFVAL "rdempty"
 -- Retrieval info: USED_PORT: rdfull 0 0 0 0 OUTPUT NODEFVAL "rdfull"
 -- Retrieval info: USED_PORT: rdreq 0 0 0 0 INPUT NODEFVAL "rdreq"
--- Retrieval info: USED_PORT: rdusedw 0 0 9 0 OUTPUT NODEFVAL "rdusedw[8..0]"
+-- Retrieval info: USED_PORT: rdusedw 0 0 10 0 OUTPUT NODEFVAL "rdusedw[9..0]"
 -- Retrieval info: USED_PORT: wrclk 0 0 0 0 INPUT NODEFVAL "wrclk"
 -- Retrieval info: USED_PORT: wrempty 0 0 0 0 OUTPUT NODEFVAL "wrempty"
 -- Retrieval info: USED_PORT: wrfull 0 0 0 0 OUTPUT NODEFVAL "wrfull"
 -- Retrieval info: USED_PORT: wrreq 0 0 0 0 INPUT NODEFVAL "wrreq"
--- Retrieval info: USED_PORT: wrusedw 0 0 9 0 OUTPUT NODEFVAL "wrusedw[8..0]"
+-- Retrieval info: USED_PORT: wrusedw 0 0 10 0 OUTPUT NODEFVAL "wrusedw[9..0]"
 -- Retrieval info: CONNECT: @data 0 0 40 0 data 0 0 40 0
 -- Retrieval info: CONNECT: @rdclk 0 0 0 0 rdclk 0 0 0 0
 -- Retrieval info: CONNECT: @rdreq 0 0 0 0 rdreq 0 0 0 0
@@ -215,10 +215,10 @@ END SYN;
 -- Retrieval info: CONNECT: q 0 0 40 0 @q 0 0 40 0
 -- Retrieval info: CONNECT: rdempty 0 0 0 0 @rdempty 0 0 0 0
 -- Retrieval info: CONNECT: rdfull 0 0 0 0 @rdfull 0 0 0 0
--- Retrieval info: CONNECT: rdusedw 0 0 9 0 @rdusedw 0 0 9 0
+-- Retrieval info: CONNECT: rdusedw 0 0 10 0 @rdusedw 0 0 10 0
 -- Retrieval info: CONNECT: wrempty 0 0 0 0 @wrempty 0 0 0 0
 -- Retrieval info: CONNECT: wrfull 0 0 0 0 @wrfull 0 0 0 0
--- Retrieval info: CONNECT: wrusedw 0 0 9 0 @wrusedw 0 0 9 0
+-- Retrieval info: CONNECT: wrusedw 0 0 10 0 @wrusedw 0 0 10 0
 -- Retrieval info: GEN_FILE: TYPE_NORMAL alt_dcfifo_w40d256.vhd TRUE
 -- Retrieval info: GEN_FILE: TYPE_NORMAL alt_dcfifo_w40d256.inc FALSE
 -- Retrieval info: GEN_FILE: TYPE_NORMAL alt_dcfifo_w40d256.cmp TRUE

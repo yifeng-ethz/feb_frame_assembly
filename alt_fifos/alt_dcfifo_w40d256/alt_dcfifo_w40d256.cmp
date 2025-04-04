@@ -24,9 +24,9 @@ component alt_dcfifo_w40d256
 		q		: OUT STD_LOGIC_VECTOR (39 DOWNTO 0);
 		rdempty		: OUT STD_LOGIC ;
 		rdfull		: OUT STD_LOGIC ;
-		rdusedw		: OUT STD_LOGIC_VECTOR (8 DOWNTO 0);
+		rdusedw		: OUT STD_LOGIC_VECTOR (9 DOWNTO 0);
 		wrempty		: OUT STD_LOGIC ;
 		wrfull		: OUT STD_LOGIC ;
-		wrusedw		: OUT STD_LOGIC_VECTOR (8 DOWNTO 0)
+		wrusedw		: OUT STD_LOGIC_VECTOR (9 DOWNTO 0)
 	);
 end component;

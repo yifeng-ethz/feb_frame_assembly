@@ -65,9 +65,7 @@ ARCHITECTURE SYN OF alt_dcfifo_w48d4 IS
 
 	COMPONENT dcfifo
 	GENERIC (
-		clocks_are_synchronized		: STRING;
 		intended_device_family		: STRING;
-		lpm_hint		: STRING;
 		lpm_numwords		: NATURAL;
 		lpm_showahead		: STRING;
 		lpm_type		: STRING;
@@ -101,21 +99,19 @@ BEGIN
 
 	dcfifo_component : dcfifo
 	GENERIC MAP (
-		clocks_are_synchronized => "FALSE",
 		intended_device_family => "Arria V",
-		lpm_hint => "RAM_BLOCK_TYPE=MLAB",
 		lpm_numwords => 4,
-		lpm_showahead => "ON",
+		lpm_showahead => "OFF",
 		lpm_type => "dcfifo",
 		lpm_width => 48,
 		lpm_widthu => 2,
 		overflow_checking => "ON",
-		rdsync_delaypipe => 4,
+		rdsync_delaypipe => 5,
 		read_aclr_synch => "ON",
 		underflow_checking => "ON",
-		use_eab => "OFF",
+		use_eab => "ON",
 		write_aclr_synch => "ON",
-		wrsync_delaypipe => 4
+		wrsync_delaypipe => 5
 	)
 	PORT MAP (
 		aclr => aclr,
@@ -146,12 +142,12 @@ END SYN;
 -- Retrieval info: PRIVATE: Empty NUMERIC "1"
 -- Retrieval info: PRIVATE: Full NUMERIC "1"
 -- Retrieval info: PRIVATE: INTENDED_DEVICE_FAMILY STRING "Arria V"
--- Retrieval info: PRIVATE: LE_BasedFIFO NUMERIC "1"
--- Retrieval info: PRIVATE: LegacyRREQ NUMERIC "0"
+-- Retrieval info: PRIVATE: LE_BasedFIFO NUMERIC "0"
+-- Retrieval info: PRIVATE: LegacyRREQ NUMERIC "1"
 -- Retrieval info: PRIVATE: MAX_DEPTH_BY_9 NUMERIC "0"
 -- Retrieval info: PRIVATE: OVERFLOW_CHECKING NUMERIC "0"
--- Retrieval info: PRIVATE: Optimize NUMERIC "0"
--- Retrieval info: PRIVATE: RAM_BLOCK_TYPE NUMERIC "1"
+-- Retrieval info: PRIVATE: Optimize NUMERIC "2"
+-- Retrieval info: PRIVATE: RAM_BLOCK_TYPE NUMERIC "0"
 -- Retrieval info: PRIVATE: SYNTH_WRAPPER_GEN_POSTFIX STRING "0"
 -- Retrieval info: PRIVATE: UNDERFLOW_CHECKING NUMERIC "0"
 -- Retrieval info: PRIVATE: UsedW NUMERIC "1"
@@ -169,21 +165,19 @@ END SYN;
 -- Retrieval info: PRIVATE: wsFull NUMERIC "1"
 -- Retrieval info: PRIVATE: wsUsedW NUMERIC "0"
 -- Retrieval info: LIBRARY: altera_mf altera_mf.altera_mf_components.all
--- Retrieval info: CONSTANT: CLOCKS_ARE_SYNCHRONIZED STRING "FALSE"
 -- Retrieval info: CONSTANT: INTENDED_DEVICE_FAMILY STRING "Arria V"
--- Retrieval info: CONSTANT: LPM_HINT STRING "RAM_BLOCK_TYPE=MLAB"
 -- Retrieval info: CONSTANT: LPM_NUMWORDS NUMERIC "4"
--- Retrieval info: CONSTANT: LPM_SHOWAHEAD STRING "ON"
+-- Retrieval info: CONSTANT: LPM_SHOWAHEAD STRING "OFF"
 -- Retrieval info: CONSTANT: LPM_TYPE STRING "dcfifo"
 -- Retrieval info: CONSTANT: LPM_WIDTH NUMERIC "48"
 -- Retrieval info: CONSTANT: LPM_WIDTHU NUMERIC "2"
 -- Retrieval info: CONSTANT: OVERFLOW_CHECKING STRING "ON"
--- Retrieval info: CONSTANT: RDSYNC_DELAYPIPE NUMERIC "4"
+-- Retrieval info: CONSTANT: RDSYNC_DELAYPIPE NUMERIC "5"
 -- Retrieval info: CONSTANT: READ_ACLR_SYNCH STRING "ON"
 -- Retrieval info: CONSTANT: UNDERFLOW_CHECKING STRING "ON"
--- Retrieval info: CONSTANT: USE_EAB STRING "OFF"
+-- Retrieval info: CONSTANT: USE_EAB STRING "ON"
 -- Retrieval info: CONSTANT: WRITE_ACLR_SYNCH STRING "ON"
--- Retrieval info: CONSTANT: WRSYNC_DELAYPIPE NUMERIC "4"
+-- Retrieval info: CONSTANT: WRSYNC_DELAYPIPE NUMERIC "5"
 -- Retrieval info: USED_PORT: aclr 0 0 0 0 INPUT GND "aclr"
 -- Retrieval info: USED_PORT: data 0 0 48 0 INPUT NODEFVAL "data[47..0]"
 -- Retrieval info: USED_PORT: q 0 0 48 0 OUTPUT NODEFVAL "q[47..0]"

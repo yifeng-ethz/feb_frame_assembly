@@ -1,22 +1,30 @@
 
-# 
+##################################################################################
 # feb_frame_assembly "FEB (Front-end Board) Frame Assembly" v1.0
 # Yifeng Wang 2024.08.11.16:06:38
 # This IP is generates the Mu3e standard data frame given input of sub-frames.
-# 
+###################################################################################
 
-# 
+################################################
+# History 
+################################################
+# 25.0.0221 - add debug_ts interface 
+# 25.0.0225 - handle cdc for csr read
+# 25.0.0306 - add debug_burst interface
+# 25.0.0324 - add docu.
+
+################################################
 # request TCL package from ACDS 16.1
-# 
-package require -exact qsys 16.1
+################################################
+package require qsys
 
 
-# 
+################################################
 # module feb_frame_assembly
-# 
-set_module_property DESCRIPTION "This IP is generates the Mu3e standard data frame given input of sub-frames."
+################################################
+set_module_property DESCRIPTION "Generates the Mu3e standard data frame given input of sub-frames of multiple ring-CAM(s)"
 set_module_property NAME feb_frame_assembly
-set_module_property VERSION 24.0.1204
+set_module_property VERSION 25.0.0306
 set_module_property INTERNAL false
 set_module_property OPAQUE_ADDRESS_MAP true
 set_module_property GROUP "Mu3e Data Plane/Modules"
@@ -29,41 +37,74 @@ set_module_property ALLOW_GREYBOX_GENERATION false
 set_module_property REPORT_HIERARCHY false
 
 
-# 
+################################################
 # file sets
-# 
+################################################ 
 add_fileset QUARTUS_SYNTH QUARTUS_SYNTH "" ""
 set_fileset_property QUARTUS_SYNTH TOP_LEVEL feb_frame_assembly
 set_fileset_property QUARTUS_SYNTH ENABLE_RELATIVE_INCLUDE_PATHS false
 set_fileset_property QUARTUS_SYNTH ENABLE_FILE_OVERWRITE_MODE false
 add_fileset_file feb_frame_assembly.vhd VHDL PATH feb_frame_assembly.vhd TOP_LEVEL_FILE
-# the sub frame fifos 
+# +---------------------+
+# | the sub frame fifos |
+# +---------------------+
 add_fileset_file alt_dcfifo_w40d256.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256.vhd
-# the sync gts (d->x)
+# +----------------------+
+# |  the sync gts (d->x) |
+# +----------------------+
 add_fileset_file alt_dcfifo_w48d4.vhd VHDL PATH alt_fifos/alt_dcfifo_w48d4/alt_dcfifo_w48d4.vhd
-# the log fifo 
+# +--------------+
+# | the log fifo |
+# +--------------+
 add_fileset_file alt_scfifo_w40d8.vhd VHDL PATH alt_fifos/alt_scfifo_w40d8/alt_scfifo_w40d8.vhd
-# the main frame fifo
+# +---------------------+
+# | the main frame fifo |
+# +---------------------+
 add_fileset_file main_fifo.vhd VHDL PATH alt_fifos/main_fifo/main_fifo.vhd
+# +-----------------+
+# | the adder (csr) |
+# +-----------------+
+add_fileset_file alt_parallel_add.vhd VHDL PATH alt_lpm/alt_parallel_add.vhd
 
-# 
+
+################################################
 # parameters
-# 
+################################################
 add_parameter INTERLEAVING_FACTOR NATURAL 4
 set_parameter_property INTERLEAVING_FACTOR DEFAULT_VALUE 4
-set_parameter_property INTERLEAVING_FACTOR DISPLAY_NAME INTERLEAVING_FACTOR
+set_parameter_property INTERLEAVING_FACTOR DISPLAY_NAME "Interleaving factor"
 set_parameter_property INTERLEAVING_FACTOR TYPE NATURAL
 set_parameter_property INTERLEAVING_FACTOR UNITS None
-set_parameter_property INTERLEAVING_FACTOR ALLOWED_RANGES 0:2147483647
+set_parameter_property INTERLEAVING_FACTOR ALLOWED_RANGES 1:16
 set_parameter_property INTERLEAVING_FACTOR HDL_PARAMETER true
+set dscpt \
+"<html>
+Set interleaving factor according to the upstream entity (ring-CAM complex). <br>
+You can set it to 1, if interleaving is not enabled in upstream. <br>
+This affects the stall time and latency of the output main frame, so you have to tune it with best of your knowledge. 
+</html>"
+set_parameter_property INTERLEAVING_FACTOR LONG_DESCRIPTION $dscpt
+set_parameter_property INTERLEAVING_FACTOR DESCRIPTION $dscpt
+
+
 add_parameter DEBUG NATURAL 1
 set_parameter_property DEBUG DEFAULT_VALUE 1
-set_parameter_property DEBUG DISPLAY_NAME DEBUG
+set_parameter_property DEBUG DISPLAY_NAME "Debug Level"
 set_parameter_property DEBUG TYPE NATURAL
 set_parameter_property DEBUG UNITS None
-set_parameter_property DEBUG ALLOWED_RANGES 0:2147483647
+set_parameter_property DEBUG ALLOWED_RANGES {0 1 2}
 set_parameter_property DEBUG HDL_PARAMETER true
-
+set dscpt \
+"<html>
+Select the debug level of the IP (affects generation).<br>
+<ul>
+	<li><b>0</b> : off <br> </li>
+	<li><b>1</b> : on, synthesizble <br> </li>
+	<li><b>2</b> : on, non-synthesizble, simulation-only <br> </li>
+</ul>
+</html>"
+set_parameter_property DEBUG LONG_DESCRIPTION $dscpt
+set_parameter_property DEBUG DESCRIPTION $dscpt
 
 # 
 # display items
@@ -285,4 +326,32 @@ set_interface_property xcvr_clock CMSIS_SVD_VARIABLES ""
 set_interface_property xcvr_clock SVD_ADDRESS_GROUP ""
 
 add_interface_port xcvr_clock i_clk_xcvr clk Input 1
+
+# 
+# connection point debug_ts
+# 
+add_interface debug_ts avalon_streaming start 
+set_interface_property debug_ts associatedClock xcvr_clock
+set_interface_property debug_ts associatedReset xcvr_reset
+set_interface_property debug_ts dataBitsPerSymbol 16
+
+add_interface_port debug_ts aso_debug_ts_data data Output 16
+add_interface_port debug_ts aso_debug_ts_valid valid Output 1
+
+# 
+# connection point debug_burst
+# 
+add_interface debug_burst avalon_streaming start
+set_interface_property debug_burst associatedClock xcvr_clock
+set_interface_property debug_burst associatedReset xcvr_reset
+set_interface_property debug_burst dataBitsPerSymbol 16
+
+add_interface_port debug_burst aso_debug_burst_valid valid Output 1
+add_interface_port debug_burst aso_debug_burst_data data Output 16
+
+
+
+
+
+
 
