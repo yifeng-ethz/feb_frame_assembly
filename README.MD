@@ -1,8 +1,8 @@
-Description: 
+* Description
 
 This IP is generates the Mu3e standard data frame given input of sub-frames.
 
-Notes:
+* Notes
 
 It acts as the CDC stage for transfer from data path clock (125 MHz) to the tranceiver clock (156.25 MHz). 
 
