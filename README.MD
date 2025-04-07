@@ -24,8 +24,10 @@ Changes:
 
 * Since no overflow in the subheader is possible, this field has been reassigned to number of hits under this subheader. Otherwise, the upstream is safe to ignore this field. The last overflow has no meaning and is all zeros. 
 
-* Package counter is a check for consistancy, for the upstream to sense overflow. 
+* Package counter is a check for consistancy, for the upstream to sense overflow of `main FIFO` of dropped frame. 
 
+* Subheader counter is a check for integrity, for the upstream to sense dropped subframe(s).
 
+* 
 
 ![Data Frame!](./frame_mod.png "Data Frame")
