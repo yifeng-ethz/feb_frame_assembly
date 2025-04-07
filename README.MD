@@ -28,6 +28,7 @@ Changes:
 
 * Subheader counter is a check for integrity, for the upstream to sense dropped subframe(s).
 
-* 
+* Hit counter is the number of hits under this frame. This number excludes dropped subframe(s). 
+
 
 ![Data Frame!](./frame_mod.png "Data Frame")
