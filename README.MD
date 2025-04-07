@@ -10,7 +10,7 @@ This IP is generates the Mu3e standard data frame given input of sub-frames.
 
 * The output of this IP is the Mu3e Main Data Frame (packetized).
 
-* [TODO] In case of overflow, the subframe packet has to be evicted and blocked for the rest of the framing time. This behavior can be realized by asserting `error` signal for store-and-forward mode FIFO. We have to ensure the FIFO is larger than some threshold to prevent "incast". 
+* [TODO] In case of overflow, the subframe packet has to be evicted and blocked for the rest of the framing time. This behavior can be realized by asserting `error` signal for store-and-forward mode FIFO. We have to ensure the FIFO is larger than some threshold to prevent "**incast**". 
 
 * Input subframes are stored in `sub FIFO`. Write side is data path clock and read side is tranceiver clock. 
 
