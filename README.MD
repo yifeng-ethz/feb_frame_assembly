@@ -20,4 +20,10 @@ This IP is generates the Mu3e standard data frame given input of sub-frames.
 
 # **Data format**
 
+Changes: 
+
+* Since no overflow in the subheader is possible, this field has been reassigned to number of hits under this subheader. Otherwise, the upstream is safe to ignore this field. The last overflow has no meaning and is all zeros. 
+
+* 
+
 ![Data Frame!](./frame_mod.png "Data Frame")
