@@ -16,7 +16,7 @@ This IP is generates the Mu3e standard data frame given input of sub-frames.
 
 * The subframes are checked by the `frame delimit marker` and `lane scheduler` to decide for granting. 
 
-* The subframes are stored and packed in the `main FIFO` (store-and-forward mode) to be read out to upstream by `upload xcvr`, which can assert backpressure. An overflow will surpress or void the next frame to be generated or being generating. 
+* The subframes are stored and packed in the `main FIFO` (store-and-forward mode) to be read out to upstream by `Avalon Streaming Mutiplexer` with packet awareness, which can assert backpressure. An overflow will surpress or void the next frame to be generated or being generating. 
 
 # **Data format**
 
