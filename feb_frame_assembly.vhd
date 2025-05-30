@@ -3,6 +3,8 @@
 -- =======================================
 -- Revision: 1.0 (file created)
 --		Date: Aug 6, 2024
+-- Revision: 1.1 (use pipeline search for subheader scheduler)
+--      Date: May 5, 2025
 -- =========
 -- Description:	[Front-end Board Frame Assembly] 
 --		This IP is generates the Mu3e standard data frame given input of sub-frames.
@@ -17,8 +19,8 @@
 --			increase the input fifo depth)
 --		
 --		Work flow:
---			Pack sub-frames in order to form a complete frame.
---			Issue upload_req to win the arbitration against slow control packet. 
+--			Pack smallest ts sub-frames in order to form a complete frame, store-and-forware.
+--			Issue 'ready' to win the arbitration against slow control packet. 
 --			
 
 -- ================ synthsizer configuration =================== 		
@@ -28,8 +30,8 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
-use IEEE.math_real.log2;
-use IEEE.math_real.ceil;
+use ieee.math_real.log2;
+use ieee.math_real.ceil;
 use ieee.std_logic_misc.and_reduce;
 use ieee.std_logic_misc.or_reduce;
 
@@ -250,8 +252,22 @@ architecture rtl of feb_frame_assembly is
 	signal scheduler_out_valid					: std_logic;
 	signal scheduler_overflow_flags				: std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
 	signal scheduler_selected_lane_onehot		: std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
-	
-	
+    
+    -- ------------------------------------
+    -- search_for_extreme
+    -- ------------------------------------
+    constant SEARCH_MIN_N_ELEMENT               : natural := N_LANE;
+    constant SEARCH_MIN_ELEMENT_SZ_BITS         : natural := 9; -- 8 of data + 1 of overflow flag
+    constant SEARCH_MIN_ARRAY_SZ_BITS           : natural := SEARCH_MIN_N_ELEMENT * SEARCH_MIN_ELEMENT_SZ_BITS;
+    constant SEARCH_MIN_ELEMENT_INDEX_BITS      : natural := integer(ceil(log2(real(SEARCH_MIN_N_ELEMENT))));
+    
+    signal search_for_extreme_in_data           : std_logic_vector(SEARCH_MIN_ARRAY_SZ_BITS-1 downto 0);
+    signal search_for_extreme_in_valid          : std_logic;
+    signal search_for_extreme_in_ready          : std_logic;
+    signal search_for_extreme_out_data          : std_logic_vector(SEARCH_MIN_ELEMENT_SZ_BITS+SEARCH_MIN_ELEMENT_INDEX_BITS-1 downto 0);
+    signal search_for_extreme_out_valid         : std_logic;
+    signal search_for_extreme_out_ready         : std_logic;
+    
 	-- -------------------------------------
 	-- sub_fifo_write_logic
 	-- -------------------------------------
@@ -324,15 +340,21 @@ architecture rtl of feb_frame_assembly is
 	end component;
 	
 	-- types
-	type main_fifo_wr_status_t 		is (IDLE, START_OF_FRAME, TRANSMISSION, LOOK_AROUND, END_OF_FRAME, RESET);
+	type main_fifo_wr_status_t 		is (IDLE, START_OF_FRAME, LOOK_AROUND, TRANSMISSION, END_OF_FRAME, RESET);
 	type csr_t is record
 		feb_type			: std_logic_vector(5 downto 0); -- 6
 		feb_id				: std_logic_vector(15 downto 0); -- 16
 	end record;
-    type xcsr_t is record
-		feb_type			: std_logic_vector(5 downto 0); -- 6
-		feb_id				: std_logic_vector(15 downto 0); -- 16
-	end record;
+--    type xcsr_t is record
+--		feb_type			: std_logic_vector(5 downto 0); -- 6
+--		feb_id				: std_logic_vector(15 downto 0); -- 16
+--	end record;
+    constant CSR_DEF            : csr_t := (
+        feb_type            => "111000", -- type = scifi
+        feb_id              => std_logic_vector(to_unsigned(2,16)) -- id = 2
+    );
+    
+    
     type subfifo_msg_t is record
         subfifo_af_alert    : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
         subfifo_af_ack      : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
@@ -348,7 +370,7 @@ architecture rtl of feb_frame_assembly is
 	signal main_fifo_sclr				: std_logic;
 	signal main_fifo_usedw				: std_logic_vector(MAIN_FIFO_USEDW_WIDTH-1 downto 0);
 	signal sof_flow					    : unsigned(2 downto 0);
-    signal look_flow                    : unsigned(2 downto 0);
+    --signal look_flow                    : unsigned(2 downto 0);
 	signal main_fifo_decision			: std_logic_vector(LANE_INDEX_WIDTH-1 downto 0);
 	signal main_fifo_wr_status			: main_fifo_wr_status_t;
 	signal sub_dout						: std_logic_vector(MAIN_FIFO_DATA_WIDTH-1 downto 0);
@@ -358,11 +380,13 @@ architecture rtl of feb_frame_assembly is
 	signal insert_trailer_done			: std_logic;
 	signal main_fifo_wr_data			: std_logic_vector(MAIN_FIFO_DATA_WIDTH-1 downto 0);
 	signal main_fifo_wr_valid			: std_logic;
-	signal csr							: csr_t;
-    signal xcsr                         : xcsr_t;
+	signal csr							: csr_t := CSR_DEF;
+    signal xcsr                         : csr_t := CSR_DEF;
     signal header_generated             : std_logic;
     signal subfifo_msg                  : subfifo_msg_t;
     signal trailer_generated            : std_logic;
+    type search_flow_t is (IDLE,POST,POST_ACK,GET,GET_ACK);
+    signal search_flow                  : search_flow_t;
     
     type main_fifo_log_t is record 
         subheader_cnt                   : unsigned(15 downto 0);
@@ -370,18 +394,12 @@ architecture rtl of feb_frame_assembly is
     end record;
     signal main_fifo_log                : main_fifo_log_t;
    
-	
-	
 	-- ----------------------------------------------
 	-- transmission_timestamp_poster (datapath)
 	-- ----------------------------------------------
 	signal frame_cnt						: unsigned(35 downto 0);
     signal frame_cnt_d1                    : unsigned(35 downto 0);
 	signal gts_8n_in_transmission			: std_logic_vector(47 downto 0);
-    
-   
-    
-    
     
     -- ------------------
     -- helper functions 
@@ -546,8 +564,7 @@ begin
     begin 
         if (rising_edge(i_clk_datapath)) then 
             if (i_rst_datapath = '1') then 
-                csr.feb_type        <= "111000"; -- scifi
-                csr.feb_id          <= std_logic_vector(to_unsigned(2,csr.feb_id'length)); 
+                csr             <= CSR_DEF;
             else 
                 avs_csr_waitrequest     <= '1';
                 avs_csr_readdata        <= (others => '0');
@@ -884,6 +901,14 @@ begin
                 
 				for i in 0 to INTERLEAVING_FACTOR-1 loop
                     -- ------------------------------------------------------------------------
+                    -- deassert valid of showahead timestamp of this lane when latched
+                    -- ------------------------------------------------------------------------
+                    if (search_for_extreme_out_valid = '1' and search_for_extreme_out_ready = '1' and to_integer(unsigned(search_for_extreme_out_data(main_fifo_decision'length-1 downto 0))) = i) then 
+                        showahead_timestamp_valid(i)        <= '0';
+                    end if;
+                
+                
+                    -- ------------------------------------------------------------------------
 					-- continuously latch the showahead subframe timestamp on the read side 
                     -- ------------------------------------------------------------------------
                     -- latch new sub-header from show-ahead fifo
@@ -920,22 +945,6 @@ begin
                         scheduler_out_valid     <= '0'; -- void it -> let main fifo write logic to wait until the selection_comb is valid
                     end if;
                     
-                    
-					-- ------------------------------	
-					-- alert overflow has happened
-                    -- ------------------------------	
---                    -- 1) reset flag: all lane overflowed, we unset the flags in each lane
---					if (and_reduce(scheduler_overflow_flags) = '1') then
---						scheduler_overflow_flags(i)		<= '0';
---                    -- 2) overflow: the lane should always source new timestamp larger than old one, this abnormal means overflow
---					elsif (showahead_timestamp(i) < showahead_timestamp_last(i) and pipe_de2wr.eop_all = '0') then 
---						-- add: eop_all = '0' to ensure do not re-toggle the ov flag too soon, as the subfifo has no new q. 
---                        --      the lanes are sourcing old subheader ts, so no need to set this flag to inform the parent
---                        -- verify ts are valid
---                        if (showahead_timestamp_valid(i) = '1' and showahead_timestamp_last_valid(i) = '1') then 
---                            scheduler_overflow_flags(i)		<= '1'; -- NOTE: overflow flags all is only valid for 1 cycle
---                        end if;
---					end if;
 				end loop; 
                 
 				-- -------------------------------------
@@ -991,14 +1000,55 @@ begin
 	end generate gen_helpers_xcvr;
     
     
+    
+    
+        
     -- ------------------------------------
-	-- lane_scheduler (for lane selection)
+    -- search_for_extreme
+    -- ------------------------------------
+    
+    proc_search_for_extreme_comb : process (all)
+    begin
+        -- derive input signals
+        for i in 0 to N_LANE-1 loop
+            search_for_extreme_in_data((i+1)*9-1 downto i*9)           <= scheduler_overflow_flags(i) & std_logic_vector(showahead_timestamp(i));
+        end loop;
+        
+    end process;                                                                              
+    
+    
+    e_search_for_extreme : entity work.search_for_extreme
+    generic map (
+        SEARCH_TARGET       => "MIN",
+        SEARCH_ARCH         => "LIN", -- QUAD is not supported yet
+        N_ELEMENT           => SEARCH_MIN_N_ELEMENT,
+        ELEMENT_SZ_BITS     => SEARCH_MIN_ELEMENT_SZ_BITS,
+        ARRAY_SZ_BITS       => SEARCH_MIN_ARRAY_SZ_BITS,
+        ELEMENT_INDEX_BITS  => SEARCH_MIN_ELEMENT_INDEX_BITS
+    )
+    port map (
+        -- avst <ingress> : the input array to be searched on
+        asi_ingress_data    => search_for_extreme_in_data,
+        asi_ingress_valid   => search_for_extreme_in_valid,
+        asi_ingress_ready   => search_for_extreme_in_ready,
+        -- avst <result> : the output element find by the search
+        aso_result_data     => search_for_extreme_out_data,
+        aso_result_valid    => search_for_extreme_out_valid,
+        aso_result_ready    => search_for_extreme_out_ready,
+        -- clock and reset interfaces
+        i_clk               => i_clk_xcvr,
+        i_rst               => i_rst_xcvr
+    );
+    
+    
+    -- ------------------------------------
+	-- lane_scheduler (for lane selection) (deprecated)
 	-- -------------------------------------- 
     -- \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     -- @blockName       lane_scheduler 
     --
     -- @berief          select the lane with smallest timestamp
-    -- @input           <timestamp> -- 1 bit (overflow) + 8 bits (ts[11:4]), where you get from subheader
+    -- @input           <timestamp> -- 1 bit (overflow) + 8 bits (ts[11:4]), where you get from subheader.
     --                  
     -- @output          <scheduler_out_valid> -- current selection is valid (if all subheaders are seen)
     --                  <scheduler_selected_lane_binary> -- selected lane (binary encoding)
@@ -1006,23 +1056,6 @@ begin
     --                  <*scheduler_selected_lane_onehot> -- selected lane (onehot encoding)
     -- \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
     
-        
---    proc_lane_scheduler : process (i_clk_xcvr) 
---    begin
---        if rising_edge(i_clk_xcvr) then 
---            for i in 0 to N_SCHEDULER_PIPELINE_STAGES-1 loop -- 0 
---                comp_tmp_reg(i)     <= comp_tmp(2*i+1);
---                index_tmp_reg(i)    <= index_tmp(2*i+1)
---            
---            end loop;
---        
---        
---        end if;
---    
---    
---    end process;
-    
-
 	proc_lane_scheduler_comb : process (all)
 	begin
 		-- input timestamp
@@ -1098,6 +1131,9 @@ begin
     -- -------------
     -- frame trailer    ---> 3)
     -- =============
+    
+    
+    
 	proc_main_fifo_wr : process (i_clk_xcvr, i_rst_xcvr) 
 	begin
 		if (rising_edge(i_clk_xcvr)) then 
@@ -1107,30 +1143,76 @@ begin
                 trailer_generated       <= '0';
 			else 
 				-- default
-				main_fifo_wr_data			<= (others => '0');
-                main_fifo_wr_valid		    <= '0';
-                header_fifo_data            <= (others => '0');
-                header_fifo_wrreq           <= '0';
-                
+				main_fifo_wr_data			    <= (others => '0');
+                main_fifo_wr_valid		        <= '0';
+                header_fifo_data                <= (others => '0');
+                header_fifo_wrreq               <= '0';
+                search_for_extreme_out_ready    <= '0';
+
 				case main_fifo_wr_status is
-                    -- 0)
+                    when LOOK_AROUND => 
+                        -- [subroutine] ask search_for_extreme which lane is smallest
+                        case search_flow is 
+                            when IDLE =>
+                                null;
+                            when POST => -- post: post lanes subh ts and start the subroutine by itself once subfifo all not empty 
+                                if (and_reduce(showahead_timestamp_valid) = '1') then 
+                                    search_flow                     <= POST_ACK;
+                                    search_for_extreme_in_valid     <= '1';
+                                end if;
+                            when POST_ACK => -- post ack: lower valid to search engine
+                                if (search_for_extreme_in_ready = '1') then
+                                    search_flow                         <= GET;
+                                    search_for_extreme_in_valid         <= '0';
+                                end if;
+                            when GET => -- get: the result (smallest subh ts lane index in binary) 
+                                if (search_for_extreme_out_valid = '1') then -- it will take a few cycles depending on the number of lanes
+                                    search_flow                         <= GET_ACK;
+                                    search_for_extreme_out_ready        <= '1'; -- recv result 
+                                    main_fifo_decision                  <= search_for_extreme_out_data(main_fifo_decision'length-1 downto 0); -- latch search result
+                                end if;
+                            when GET_ACK => 
+                                search_flow                             <= IDLE;
+                                main_fifo_wr_status                     <= TRANSMISSION;
+                                search_for_extreme_out_ready            <= '0'; 
+                                -- be mindful: you need to restore it back to IDLE 
+                            when others => 
+                                null; 
+                        end case;
+                    
 					when IDLE =>
-                        -- grab the next lane with smallest ts 
-                        -- -> check if at least one subframe is inside fifo
-                        if (scheduler_out_valid = '1') then
-                            if (header_generated = '0') then  
-                                -- start of frame: go to generate new frame header
-                                main_fifo_wr_status		<= START_OF_FRAME;
-                            elsif (pipe_de2wr.eop_all = '1' and trailer_generated = '0') then 
-                                -- end of frame: stop read subfifo, go to eof
-                                -- trailer_generated is to avoid deadlock between sof and eof
-                                main_fifo_wr_status		<= END_OF_FRAME;
-                            else  
-                                -- between sof and eof: read subfifo for subheader + hits 
-                                main_fifo_decision		<= std_logic_vector(scheduler_selected_lane_binary); -- latch the current selection
-                                main_fifo_wr_status		<= TRANSMISSION;
+                        -- use the search engine result to grant the right lane and go to appropriate segment of the packet
+                        if (header_generated = '0') then  
+                            -- start of frame: go to generate new frame header
+                            main_fifo_wr_status		<= START_OF_FRAME;
+                        elsif (pipe_de2wr.eop_all = '1' and trailer_generated = '0') then 
+                            -- end of frame: stop read subfifo, go to eof
+                            -- trailer_generated is to avoid deadlock between sof and eof
+                            main_fifo_wr_status		<= END_OF_FRAME;
+                        else 
+                            -- between sof and eof: read subfifo for subheader + hits 
+                            if (and_reduce(showahead_timestamp_valid) = '1') then -- only when all lanes are valid. otherwise can have 1-255-0, 
+                                main_fifo_wr_status     <= LOOK_AROUND;
+                                search_flow             <= POST;
                             end if;
                         end if;
+                        
+--                        if (search_flow = GET_ACK) then -- search done, dangling, its your turn to decide which frame segment to go
+--                            search_flow          <= POST; -- remember to restore the subroutine before next use
+--                            if (header_generated = '0') then  
+--                                -- start of frame: go to generate new frame header
+--                                main_fifo_wr_status		<= START_OF_FRAME;
+--                            elsif (pipe_de2wr.eop_all = '1' and trailer_generated = '0') then 
+--                                -- end of frame: stop read subfifo, go to eof
+--                                -- trailer_generated is to avoid deadlock between sof and eof
+--                                main_fifo_wr_status		<= END_OF_FRAME;
+--                            else  
+--                                -- between sof and eof: read subfifo for subheader + hits 
+--                                main_fifo_wr_status		        <= TRANSMISSION;
+--                                search_for_extreme_out_ready    <= '1'; -- ack the search_for_extreme entity
+--                            end if;
+--                        end if;
+                        
                         -- unset trailer_generated once all subfifo are recovered from ts overflow, this ensures no stuck at sof and eof deadloops
                         if (or_reduce(scheduler_overflow_flags) = '0') then -- all clear now
                             trailer_generated       <= '0';
@@ -1185,7 +1267,7 @@ begin
                         
                         -- escape condition: 
 						if (sub_eop_is_seen = '1') then
-							main_fifo_wr_status		<= LOOK_AROUND; -- must go immediately 
+							main_fifo_wr_status		        <= IDLE; -- this subframe is read, we can start to calc the next frame in IDLE
                             -- log the subheader count in this main frame
                             main_fifo_log.subheader_cnt     <= main_fifo_log.subheader_cnt + 1;
 						end if;
@@ -1194,18 +1276,18 @@ begin
                             main_fifo_log.hit_cnt           <= main_fifo_log.hit_cnt + 1;
                         end if;
                     -- 2.1)
-					when LOOK_AROUND => -- break: if all lane overflew, goto: trailer
-                        look_flow     <= look_flow + 1;
-                        -- this state will last 3 cycles, latch/exit when 2. 
-                        -- reason: after rdack, wait for the showahead_timestamp (1 cycle) and overflow_flag/eop_all (2 cycles) is settled
-                        case to_integer(look_flow) is 
-                            when 2 =>
-                                 main_fifo_wr_status		<= IDLE;
-                                -- reset counter 
-                                look_flow     <= (others => '0');
-                            when others => 
-                                null;
-                        end case;
+--					when LOOK_AROUND => -- break: if all lane overflew, goto: trailer
+--                        look_flow     <= look_flow + 1;
+--                        -- this state will last 3 cycles, latch/exit when 2. 
+--                        -- reason: after rdack, wait for the showahead_timestamp (1 cycle) and overflow_flag/eop_all (2 cycles) is settled
+--                        case to_integer(look_flow) is 
+--                            when 2 =>
+--                                 main_fifo_wr_status		<= IDLE;
+--                                -- reset counter 
+--                                look_flow     <= (others => '0');
+--                            when others => 
+--                                null;
+--                        end case;
 
                     -- 3) frame trailer
 					when END_OF_FRAME => -- [trailer]
@@ -1227,10 +1309,13 @@ begin
                         
 					when RESET =>
 						main_fifo_wr_status			<= IDLE;
+                        search_flow                 <= IDLE;
                         sof_flow					<= (others => '0');
-                        look_flow                   <= (others => '0');
+                        --look_flow                   <= (others => '0');
                         insert_trailer_done		    <= '0';
                         header_generated            <= '0';
+                        search_for_extreme_in_valid <= '0';
+                        search_for_extreme_out_ready<= '1'; -- clear the pending result from search engine
                         -- clear log
                         main_fifo_log.subheader_cnt         <= (others => '0');
                         main_fifo_log.hit_cnt               <= (others => '0');
@@ -1266,6 +1351,7 @@ begin
 	
 	
 	proc_main_fifo_wr_comb : process (all)
+    -- there are three input flow to the main fifo. 1) subheader 2) 
 	begin
         -- ---------------------------------
         -- sub_dout <- sub_fifos

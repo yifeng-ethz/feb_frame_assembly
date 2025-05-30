@@ -12,6 +12,7 @@
 # 25.0.0225 - handle cdc for csr read
 # 25.0.0306 - add debug_burst interface
 # 25.0.0324 - add docu.
+# 25.0.0505 - use pipeline search 
 
 ################################################
 # request TCL package from ACDS 16.1
@@ -24,7 +25,7 @@ package require qsys
 ################################################
 set_module_property DESCRIPTION "Generates the Mu3e standard data frame given input of sub-frames of multiple ring-CAM(s)"
 set_module_property NAME feb_frame_assembly
-set_module_property VERSION 25.0.0306
+set_module_property VERSION 25.0.0505
 set_module_property INTERNAL false
 set_module_property OPAQUE_ADDRESS_MAP true
 set_module_property GROUP "Mu3e Data Plane/Modules"
@@ -65,7 +66,10 @@ add_fileset_file main_fifo.vhd VHDL PATH alt_fifos/main_fifo/main_fifo.vhd
 # | the adder (csr) |
 # +-----------------+
 add_fileset_file alt_parallel_add.vhd VHDL PATH alt_lpm/alt_parallel_add.vhd
-
+# +--------------------+
+# | search for extreme |
+# +--------------------+
+add_fileset_file search_for_extreme.vhd VHDL PATH ./search_for_extreme.vhd
 
 ################################################
 # parameters
