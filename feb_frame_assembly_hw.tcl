@@ -13,6 +13,8 @@
 # 25.0.0306 - add debug_burst interface
 # 25.0.0324 - add docu.
 # 25.0.0505 - use pipeline search 
+# 25.0.0701 - enlarge subfifo 512 to 1024 for new scheduler (revoked)
+# 25.0.0710 - add debug interfaces
 
 ################################################
 # request TCL package from ACDS 16.1
@@ -25,7 +27,7 @@ package require qsys
 ################################################
 set_module_property DESCRIPTION "Generates the Mu3e standard data frame given input of sub-frames of multiple ring-CAM(s)"
 set_module_property NAME feb_frame_assembly
-set_module_property VERSION 25.0.0505
+set_module_property VERSION 25.0.0710
 set_module_property INTERNAL false
 set_module_property OPAQUE_ADDRESS_MAP true
 set_module_property GROUP "Mu3e Data Plane/Modules"
@@ -70,6 +72,8 @@ add_fileset_file alt_parallel_add.vhd VHDL PATH alt_lpm/alt_parallel_add.vhd
 # | search for extreme |
 # +--------------------+
 add_fileset_file search_for_extreme.vhd VHDL PATH ./search_for_extreme.vhd
+#add_fileset_file search_for_extreme2.sv SYSTEM_VERILOG PATH ./search_for_extreme2.sv # some bug
+add_fileset_file search_for_extreme3.vhd VHDL PATH ./search_for_extreme3.vhd
 
 ################################################
 # parameters
@@ -354,7 +358,38 @@ add_interface_port debug_burst aso_debug_burst_valid valid Output 1
 add_interface_port debug_burst aso_debug_burst_data data Output 16
 
 
+#
+# connection point debug_filllevel
+#
+add_interface debug_filllevel avalon_streaming start
+set_interface_property debug_filllevel associatedClock datapath_clock
+set_interface_property debug_filllevel associatedReset datapath_reset
+set_interface_property debug_filllevel dataBitsPerSymbol 16
 
+add_interface_port debug_filllevel aso_debug_filllevel_valid valid Output 1
+add_interface_port debug_filllevel aso_debug_filllevel_data data Output 16
+
+#
+# connection point debug_loss8fill
+#
+add_interface debug_loss8fill avalon_streaming start
+set_interface_property debug_loss8fill associatedClock datapath_clock
+set_interface_property debug_loss8fill associatedReset datapath_reset
+set_interface_property debug_loss8fill dataBitsPerSymbol 16
+
+add_interface_port debug_loss8fill aso_debug_loss8fill_valid valid Output 1
+add_interface_port debug_loss8fill aso_debug_loss8fill_data data Output 16
+
+#
+# connection point debug_delay8loss
+#
+add_interface debug_delay8loss avalon_streaming start
+set_interface_property debug_delay8loss associatedClock datapath_clock
+set_interface_property debug_delay8loss associatedReset datapath_reset
+set_interface_property debug_delay8loss dataBitsPerSymbol 16
+
+add_interface_port debug_delay8loss aso_debug_delay8loss_valid valid Output 1
+add_interface_port debug_delay8loss aso_debug_delay8loss_data data Output 16
 
 
 

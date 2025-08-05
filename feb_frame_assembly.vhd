@@ -5,6 +5,8 @@
 --		Date: Aug 6, 2024
 -- Revision: 1.1 (use pipeline search for subheader scheduler)
 --      Date: May 5, 2025
+-- Revision: 1.2 (add debug interfaces and refining read sub fifo switching speed)
+--      Date: Jul 10, 2025
 -- =========
 -- Description:	[Front-end Board Frame Assembly] 
 --		This IP is generates the Mu3e standard data frame given input of sub-frames.
@@ -123,6 +125,17 @@ port (
     aso_debug_burst_valid		: out std_logic;
 	aso_debug_burst_data		: out std_logic_vector(15 downto 0);
 
+    -- AVST <debug_filllevel>
+    aso_debug_filllevel_valid	: out std_logic; -- always valid
+    aso_debug_filllevel_data	: out std_logic_vector(15 downto 0); -- [8:0] sub_fifo used words (only subfifo 0)
+
+    -- AVST <debug_loss8fill>
+    aso_debug_loss8fill_valid	: out std_logic; -- only valid during mask state (packet dropped)
+    aso_debug_loss8fill_data	: out std_logic_vector(15 downto 0); -- [8:0] sub_fifo used words (only subfifo 0)
+
+    -- AVST <debug_delay8loss>
+    aso_debug_delay8loss_valid	: out std_logic; -- only valid during mask state (packet dropped)
+    aso_debug_delay8loss_data	: out std_logic_vector(15 downto 0); -- delay of hits or shd when dropped (only subfifo 0)
 	
 	-- clock and reset interface 
 	i_clk_xcvr						: std_logic; -- xclk
@@ -189,7 +202,8 @@ architecture rtl of feb_frame_assembly is
 	constant SUB_FIFO_DATA_WIDTH			: natural := 40;
 	constant SUB_FIFO_USEDW_WIDTH			: natural := 10; -- used one more bit for it
 	constant SUB_FIFO_DEPTH					: natural := 512; -- does not overflow at 960kHz/ch (fillness < 220). no, at this rate, the fillness can be larger than 256... overflow
-	constant SUB_FIFO_SOP_LOC				: natural := 37;
+                                                              -- will overflow using new scheduler at rate = 5. enlarge to 1024
+    constant SUB_FIFO_SOP_LOC				: natural := 37;
 	constant SUB_FIFO_EOP_LOC				: natural := 36;
 	
 	-- types
@@ -267,6 +281,34 @@ architecture rtl of feb_frame_assembly is
     signal search_for_extreme_out_data          : std_logic_vector(SEARCH_MIN_ELEMENT_SZ_BITS+SEARCH_MIN_ELEMENT_INDEX_BITS-1 downto 0);
     signal search_for_extreme_out_valid         : std_logic;
     signal search_for_extreme_out_ready         : std_logic;
+
+    -- ---------------------------------    
+    -- search_for_extreme2
+    -- ---------------------------------
+    constant SFE2_DATA_WIDTH        : natural := 9; -- width of each input value
+    constant SFE2_ARRAY_SIZE        : natural := 4; -- number of input values (must be power of 2)
+    constant SFE2_ARRAY_SIZE_BITS   : natural := integer(ceil(log2(real(SFE2_ARRAY_SIZE)))); -- log2 of array size
+
+    component search_for_extreme2
+	generic(
+		ARRAY_SIZE              : natural := SFE2_ARRAY_SIZE;            -- Number of input values (must be power of 2)
+        DATA_WIDTH              : natural := SFE2_DATA_WIDTH;            -- Width of each input value
+        PIPELINE_STAGES         : natural := 4;             -- Number of pipeline stages
+        INCLUDE_INDEX           : natural := 1              -- Include index of minimum value in output
+	);
+	port(
+		clk                 : in  std_logic;                -- Clock signal
+        rst_n               : in  std_logic;                -- Active low reset signal
+        valid_in            : in  std_logic;                -- Input valid signal
+        data_in             : in  std_logic_vector(SFE2_DATA_WIDTH*SFE2_ARRAY_SIZE-1 downto 0); -- Input data (concatenated values)
+    
+        valid_out           : out std_logic;               -- Output valid signal
+        min_value           : out std_logic_vector(SFE2_DATA_WIDTH-1 downto 0); -- Minimum value found in the input
+        min_index           : out std_logic_vector(SFE2_ARRAY_SIZE_BITS-1 downto 0); -- Index of the minimum value (if INCLUDE_INDEX=1)
+        ready               : out std_logic                -- Output ready signal
+	);
+	end component;
+
     
 	-- -------------------------------------
 	-- sub_fifo_write_logic
@@ -556,11 +598,105 @@ architecture rtl of feb_frame_assembly is
     signal delta_timestamp          : std_logic_vector(DELTA_TIMESTAMP_WIDTH-1 downto 0);
     signal delta_arrival            : std_logic_vector(DELTA_ARRIVAL_WIDTH-1 downto 0);
 	
+    -- -----------------------------------------------
+    -- track_ingress_timestamp 
+    -- -----------------------------------------------
+    signal ingress_timestamp_valid         : std_logic_vector(1 downto 0); -- 0: hit, 1: shd
+    signal ingress_timestamp               : std_logic_vector(47 downto 0); -- 48 bit timestamp, 12 bit for shd, 4 bit for hit
+    signal ingress_delay_valid             : std_logic; -- valid if timestamp is valid
+    signal ingress_delay_data              : std_logic_vector(47 downto 0); -- delay of hits or shd when dropped (only subfifo 0)
+    signal ingress_data_masked             : std_logic; -- data is masked, i.e. dropped
+    signal ingress_data_masked_d1          : std_logic; -- data is masked, i.e. dropped, delayed by 1 clock cycle
+
 begin
+    -- ////////////////////////////////////////////////////////
+    -- debug 
+    -- ////////////////////////////////////////////////////////
+    proc_debug : process (all)
+    begin
+        -- filllevel
+        aso_debug_filllevel_valid       <= '1';
+        aso_debug_filllevel_data        <= std_logic_vector(to_unsigned(to_integer(unsigned(sub_fifos(0).wrusedw)), 16)); -- subfifo 0 only, used words in subfifo 0
+
+        -- loss at filllevel
+        if (subfifo_trans_status(0) = MASKED and asi_hit_type2_0_valid = '1') then 
+            aso_debug_loss8fill_valid   <= '1';
+        else 
+            aso_debug_loss8fill_valid   <= '0';
+        end if;
+        aso_debug_loss8fill_data        <= std_logic_vector(to_unsigned(to_integer(unsigned(sub_fifos(0).wrusedw)), 16)); -- subfifo 0 only, used words in subfifo 0
+
+        -- delay at loss
+        if (ingress_delay_valid = '1' and ingress_data_masked_d1 = '1') then 
+            aso_debug_delay8loss_valid   <= '1';
+        else 
+            aso_debug_delay8loss_valid   <= '0';
+        end if;
+        aso_debug_delay8loss_data    <= std_logic_vector(to_unsigned(to_integer(unsigned(ingress_delay_data)), 16)); -- subfifo 0 only, delay of hits or shd when dropped (only subfifo 0), truncate from 48 -> 16 bits
+
+    end process;
+
+    -- ////////////////////////////////////////////////////////
+    -- track_ingress_timestamp
+    -- ////////////////////////////////////////////////////////
+    proc_track_ingress_timestamp : process (i_clk_datapath)
+    begin
+        if rising_edge(i_clk_datapath) then 
+            if (i_rst_datapath = '1') then 
+                -- bits
+                ingress_timestamp_valid     <= (others => '0');
+                ingress_delay_valid         <= '0'; 
+                ingress_data_masked         <= '0'; 
+                -- array
+                ingress_timestamp           <= (others => '0');
+            else 
+                -- default 
+                ingress_timestamp_valid         <= (others => '0');
+                ingress_delay_valid             <= '0';
+                ingress_data_masked             <= '0';
+
+                -- cycle 1:
+                -- =========================================
+                -- track the timestamp and pad incoming shd and hit ts to 48 bits 
+                if (asi_hit_type2_0_valid = '1') then -- track every data
+                    if (asi_hit_type2_0_startofpacket = '1') then 
+                        -- start of packet, reset timestamp
+                        ingress_timestamp(11 downto 4)      <= asi_hit_type2_0_data(31 downto 24); -- update shd timestamp
+                        if (to_integer(unsigned(ingress_timestamp(11 downto 4))) > to_integer(unsigned(asi_hit_type2_0_data(31 downto 24)))) then -- new shd is smaller than current, overturned, need to update hdr ts
+                            ingress_timestamp(47 downto 12)     <= std_logic_vector(unsigned(ingress_timestamp(47 downto 12)) + 1); -- self-increment hdr ts
+                        end if;
+                        ingress_timestamp_valid(1)          <= '1'; -- valid timestamp for shd      
+                    else
+                        ingress_timestamp(3 downto 0)       <= asi_hit_type2_0_data(31 downto 28); -- update hit timestamp
+                        ingress_timestamp_valid(0)          <= '1'; -- valid timestamp for hit
+                    end if;
+                end if;
+                -- mark masked data
+                if (subfifo_trans_status(0) = MASKED and asi_hit_type2_0_valid = '1') then 
+                    ingress_data_masked         <= '1';
+                end if;
+
+                -- cycle 2:
+                -- =========================================
+                -- calculate the delay of shd and hit
+                if (or_reduce(ingress_timestamp_valid) = '1') then 
+                    ingress_delay_valid          <= '1';
+                    ingress_delay_data           <= std_logic_vector(d_gts_counter - unsigned(ingress_timestamp));
+                end if;
+                ingress_data_masked_d1          <= ingress_data_masked; -- pipeline by 1 clock cycle
+            end if;
+        end if;
+
+
+
+    end process;
+
+
+
     -- ////////////////////////////////////////////////////////
     -- csr_hub 
     -- ////////////////////////////////////////////////////////
-    proc_csr_hub : process (i_clk_datapath, i_rst_datapath)
+    proc_csr_hub : process (i_clk_datapath)
     begin 
         if (rising_edge(i_clk_datapath)) then 
             if (i_rst_datapath = '1') then 
@@ -903,7 +1039,7 @@ begin
                     -- ------------------------------------------------------------------------
                     -- deassert valid of showahead timestamp of this lane when latched
                     -- ------------------------------------------------------------------------
-                    if (search_for_extreme_out_valid = '1' and search_for_extreme_out_ready = '1' and to_integer(unsigned(search_for_extreme_out_data(main_fifo_decision'length-1 downto 0))) = i) then 
+                    if (main_fifo_wrreq = '1' and main_fifo_din(37) = '1' and to_integer(unsigned(search_for_extreme_out_data(main_fifo_decision'length-1 downto 0))) = i) then 
                         showahead_timestamp_valid(i)        <= '0';
                     end if;
                 
@@ -915,7 +1051,7 @@ begin
                     -- -> the subheader
                     -- -> latch once (new ts)
                     -- -> not empty (fifo q is valid)
-					if (xcvr_word_is_subheader(i) = '1' and unsigned(sub_fifos(i).q(31 downto 24)) /= showahead_timestamp(i) and sub_fifos(i).rdempty /= '1') then 
+					if (xcvr_word_is_subheader(i) = '1' and unsigned(sub_fifos(i).q(31 downto 24)) /= showahead_timestamp(i) and sub_fifos(i).rdempty /= '1') then -- if new ts has overturned, it can be not latched, thus blocking
 						-- latch the showahead ts of the subfifo and raise flag 
 						showahead_timestamp(i)		    <= unsigned(sub_fifos(i).q(31 downto 24)); 
                         showahead_timestamp_valid(i)    <= '1';
@@ -1017,10 +1153,51 @@ begin
     end process;                                                                              
     
     
-    e_search_for_extreme : entity work.search_for_extreme
+    -- e_search_for_extreme : entity work.search_for_extreme
+    -- generic map (
+    --     SEARCH_TARGET       => "MIN",
+    --     SEARCH_ARCH         => "LIN", -- QUAD is not supported yet
+    --     N_ELEMENT           => SEARCH_MIN_N_ELEMENT,
+    --     ELEMENT_SZ_BITS     => SEARCH_MIN_ELEMENT_SZ_BITS,
+    --     ARRAY_SZ_BITS       => SEARCH_MIN_ARRAY_SZ_BITS,
+    --     ELEMENT_INDEX_BITS  => SEARCH_MIN_ELEMENT_INDEX_BITS
+    -- )
+    -- port map (
+    --     -- avst <ingress> : the input array to be searched on
+    --     asi_ingress_data    => search_for_extreme_in_data,
+    --     asi_ingress_valid   => search_for_extreme_in_valid,
+    --     asi_ingress_ready   => search_for_extreme_in_ready,
+    --     -- avst <result> : the output element find by the search
+    --     aso_result_data     => search_for_extreme_out_data,
+    --     aso_result_valid    => search_for_extreme_out_valid,
+    --     aso_result_ready    => search_for_extreme_out_ready,
+    --     -- clock and reset interfaces
+    --     i_clk               => i_clk_xcvr,
+    --     i_rst               => i_rst_xcvr
+    -- );
+
+    -- ------------------------------------
+    -- search_for_extreme2
+    -- ------------------------------------
+    -- sfe2 : search_for_extreme2
+	-- 	port map (
+    --         clk                 => i_clk_xcvr,
+    --         rst_n               => i_rst_xcvr,
+    --         valid_in            => search_for_extreme_in_valid,
+    --         data_in             => search_for_extreme_in_data,
+        
+    --         valid_out           => search_for_extreme_out_valid,
+    --         min_value           => open,
+    --         min_index           => search_for_extreme_out_data(main_fifo_decision'length-1 downto 0), -- Index of the minimum value found in the input
+    --         ready               => open
+	-- 	);
+    
+    -- ------------------------------------
+    -- search_for_extreme3
+    -- ------------------------------------
+
+    e_search_for_extreme3 : entity work.search_for_extreme3
     generic map (
-        SEARCH_TARGET       => "MIN",
-        SEARCH_ARCH         => "LIN", -- QUAD is not supported yet
         N_ELEMENT           => SEARCH_MIN_N_ELEMENT,
         ELEMENT_SZ_BITS     => SEARCH_MIN_ELEMENT_SZ_BITS,
         ARRAY_SZ_BITS       => SEARCH_MIN_ARRAY_SZ_BITS,
@@ -1030,16 +1207,13 @@ begin
         -- avst <ingress> : the input array to be searched on
         asi_ingress_data    => search_for_extreme_in_data,
         asi_ingress_valid   => search_for_extreme_in_valid,
-        asi_ingress_ready   => search_for_extreme_in_ready,
         -- avst <result> : the output element find by the search
         aso_result_data     => search_for_extreme_out_data,
         aso_result_valid    => search_for_extreme_out_valid,
-        aso_result_ready    => search_for_extreme_out_ready,
         -- clock and reset interfaces
         i_clk               => i_clk_xcvr,
         i_rst               => i_rst_xcvr
     );
-    
     
     -- ------------------------------------
 	-- lane_scheduler (for lane selection) (deprecated)
@@ -1161,17 +1335,16 @@ begin
                                     search_for_extreme_in_valid     <= '1';
                                 end if;
                             when POST_ACK => -- post ack: lower valid to search engine
-                                if (search_for_extreme_in_ready = '1') then
-                                    search_flow                         <= GET;
-                                    search_for_extreme_in_valid         <= '0';
-                                end if;
+                                search_flow                         <= GET;
+                                search_for_extreme_in_valid         <= '0';
                             when GET => -- get: the result (smallest subh ts lane index in binary) 
                                 if (search_for_extreme_out_valid = '1') then -- it will take a few cycles depending on the number of lanes
-                                    search_flow                         <= GET_ACK;
-                                    search_for_extreme_out_ready        <= '1'; -- recv result 
+                                    search_flow                         <= IDLE;
+                                    main_fifo_wr_status                 <= TRANSMISSION;
+                                    --search_for_extreme_out_ready        <= '1'; -- recv result 
                                     main_fifo_decision                  <= search_for_extreme_out_data(main_fifo_decision'length-1 downto 0); -- latch search result
                                 end if;
-                            when GET_ACK => 
+                            when GET_ACK => -- not used...
                                 search_flow                             <= IDLE;
                                 main_fifo_wr_status                     <= TRANSMISSION;
                                 search_for_extreme_out_ready            <= '0'; 
@@ -1192,8 +1365,10 @@ begin
                         else 
                             -- between sof and eof: read subfifo for subheader + hits 
                             if (and_reduce(showahead_timestamp_valid) = '1') then -- only when all lanes are valid. otherwise can have 1-255-0, 
-                                main_fifo_wr_status     <= LOOK_AROUND;
-                                search_flow             <= POST;
+                                main_fifo_wr_status             <= LOOK_AROUND;
+                                search_flow                   <= POST;
+                                --search_flow                     <= POST_ACK; -- jump to next state 
+                                --search_for_extreme_in_valid     <= '1';
                             end if;
                         end if;
                         
@@ -1275,6 +1450,7 @@ begin
                         if (main_fifo_wrreq = '1' and main_fifo_din(37) = '0') then -- write a hit from subheader (sub fifo -> main fifo)
                             main_fifo_log.hit_cnt           <= main_fifo_log.hit_cnt + 1;
                         end if;
+
                     -- 2.1)
 --					when LOOK_AROUND => -- break: if all lane overflew, goto: trailer
 --                        look_flow     <= look_flow + 1;
@@ -1720,7 +1896,7 @@ begin
                 null;
         end case;
 
-end process;
+    end process;
     
     
     
