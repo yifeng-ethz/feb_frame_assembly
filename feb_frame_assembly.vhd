@@ -40,6 +40,7 @@ use ieee.std_logic_misc.or_reduce;
 entity feb_frame_assembly is
 generic (
 	INTERLEAVING_FACTOR				: natural := 4; -- set the same as upstream stack-cache 
+    N_SHD                           : natural := 256; -- number of subheader, e.g., 256 
 	DEBUG							: natural := 1
 );
 port (
@@ -245,16 +246,16 @@ architecture rtl of feb_frame_assembly is
 
 	
 	-- ------------------------------------
-	-- lane_scheduler
+	-- lane_scheduler (comb) TODO: test for 128
 	-- ------------------------------------
 	constant LANE_INDEX_WIDTH					: natural := integer(ceil(log2(real(INTERLEAVING_FACTOR)))); -- 2
 	constant SUBHEADER_TIMESTAMP_WIDTH			: natural := 8;
     -- constants
-    constant TIMESTAMP_WIDTH		: natural := 8;
-    constant N_LANE					: natural := INTERLEAVING_FACTOR; -- 4
+    constant COMP_TIMESTAMP_WIDTH		: natural := integer(ceil(log2(real(N_SHD)))); -- 8 for 256 subheaders, 7 for 128 subheaders
+    constant N_LANE					    : natural := INTERLEAVING_FACTOR; -- 4
     -- types
-    type timestamp_t				is array (0 to N_LANE-1) of unsigned(TIMESTAMP_WIDTH downto 0); -- + 1 bit
-    type comp_tmp_t					is array (0 to N_LANE-2) of unsigned(TIMESTAMP_WIDTH downto 0); -- + 1 bit
+    type timestamp_t				is array (0 to N_LANE-1) of unsigned(COMP_TIMESTAMP_WIDTH downto 0); -- + 1 bit
+    type comp_tmp_t					is array (0 to N_LANE-2) of unsigned(COMP_TIMESTAMP_WIDTH downto 0); -- + 1 bit
     type index_tmp_t				is array (0 to N_LANE-2) of unsigned(LANE_INDEX_WIDTH-1 downto 0); 
     -- signals
     signal timestamp				: timestamp_t;
@@ -267,13 +268,16 @@ architecture rtl of feb_frame_assembly is
 	signal scheduler_overflow_flags				: std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
 	signal scheduler_selected_lane_onehot		: std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
     
+    -- use up for comb / use down for pipeline
+
     -- ------------------------------------
-    -- search_for_extreme
+    -- search_for_extreme (pipeline)
     -- ------------------------------------
     constant SEARCH_MIN_N_ELEMENT               : natural := N_LANE;
-    constant SEARCH_MIN_ELEMENT_SZ_BITS         : natural := 9; -- 8 of data + 1 of overflow flag
+    constant SEARCH_MIN_TIMESTAMP_WDITH         : natural := integer(ceil(log2(real(N_SHD)))); -- 8 for 256 subheaders, 7 for 128 subheaders
+    constant SEARCH_MIN_ELEMENT_SZ_BITS         : natural := SEARCH_MIN_TIMESTAMP_WDITH + 1; -- default : 8 of data + 1 of overflow flag
     constant SEARCH_MIN_ARRAY_SZ_BITS           : natural := SEARCH_MIN_N_ELEMENT * SEARCH_MIN_ELEMENT_SZ_BITS;
-    constant SEARCH_MIN_ELEMENT_INDEX_BITS      : natural := integer(ceil(log2(real(SEARCH_MIN_N_ELEMENT))));
+    constant SEARCH_MIN_ELEMENT_INDEX_BITS      : natural := integer(ceil(log2(real(SEARCH_MIN_N_ELEMENT)))); -- 2 for 4 lanes
     
     signal search_for_extreme_in_data           : std_logic_vector(SEARCH_MIN_ARRAY_SZ_BITS-1 downto 0);
     signal search_for_extreme_in_valid          : std_logic;
@@ -283,31 +287,31 @@ architecture rtl of feb_frame_assembly is
     signal search_for_extreme_out_ready         : std_logic;
 
     -- ---------------------------------    
-    -- search_for_extreme2
+    -- search_for_extreme2 (not used)
     -- ---------------------------------
-    constant SFE2_DATA_WIDTH        : natural := 9; -- width of each input value
-    constant SFE2_ARRAY_SIZE        : natural := 4; -- number of input values (must be power of 2)
-    constant SFE2_ARRAY_SIZE_BITS   : natural := integer(ceil(log2(real(SFE2_ARRAY_SIZE)))); -- log2 of array size
+    -- constant SFE2_DATA_WIDTH        : natural := 9; -- width of each input value
+    -- constant SFE2_ARRAY_SIZE        : natural := 4; -- number of input values (must be power of 2)
+    -- constant SFE2_ARRAY_SIZE_BITS   : natural := integer(ceil(log2(real(SFE2_ARRAY_SIZE)))); -- log2 of array size
 
-    component search_for_extreme2
-	generic(
-		ARRAY_SIZE              : natural := SFE2_ARRAY_SIZE;            -- Number of input values (must be power of 2)
-        DATA_WIDTH              : natural := SFE2_DATA_WIDTH;            -- Width of each input value
-        PIPELINE_STAGES         : natural := 4;             -- Number of pipeline stages
-        INCLUDE_INDEX           : natural := 1              -- Include index of minimum value in output
-	);
-	port(
-		clk                 : in  std_logic;                -- Clock signal
-        rst_n               : in  std_logic;                -- Active low reset signal
-        valid_in            : in  std_logic;                -- Input valid signal
-        data_in             : in  std_logic_vector(SFE2_DATA_WIDTH*SFE2_ARRAY_SIZE-1 downto 0); -- Input data (concatenated values)
+    -- component search_for_extreme2
+	-- generic(
+	-- 	ARRAY_SIZE              : natural := SFE2_ARRAY_SIZE;            -- Number of input values (must be power of 2)
+    --     DATA_WIDTH              : natural := SFE2_DATA_WIDTH;            -- Width of each input value
+    --     PIPELINE_STAGES         : natural := 4;             -- Number of pipeline stages
+    --     INCLUDE_INDEX           : natural := 1              -- Include index of minimum value in output
+	-- );
+	-- port(
+	-- 	clk                 : in  std_logic;                -- Clock signal
+    --     rst_n               : in  std_logic;                -- Active low reset signal
+    --     valid_in            : in  std_logic;                -- Input valid signal
+    --     data_in             : in  std_logic_vector(SFE2_DATA_WIDTH*SFE2_ARRAY_SIZE-1 downto 0); -- Input data (concatenated values)
     
-        valid_out           : out std_logic;               -- Output valid signal
-        min_value           : out std_logic_vector(SFE2_DATA_WIDTH-1 downto 0); -- Minimum value found in the input
-        min_index           : out std_logic_vector(SFE2_ARRAY_SIZE_BITS-1 downto 0); -- Index of the minimum value (if INCLUDE_INDEX=1)
-        ready               : out std_logic                -- Output ready signal
-	);
-	end component;
+    --     valid_out           : out std_logic;               -- Output valid signal
+    --     min_value           : out std_logic_vector(SFE2_DATA_WIDTH-1 downto 0); -- Minimum value found in the input
+    --     min_index           : out std_logic_vector(SFE2_ARRAY_SIZE_BITS-1 downto 0); -- Index of the minimum value (if INCLUDE_INDEX=1)
+    --     ready               : out std_logic                -- Output ready signal
+	-- );
+	-- end component;
 
     
 	-- -------------------------------------
@@ -339,7 +343,7 @@ architecture rtl of feb_frame_assembly is
 	-- frame_delimiter_marker
 	-- ---------------------------
 	-- types
-	type showahead_timestamp_t				is array (0 to INTERLEAVING_FACTOR-1) of unsigned(7 downto 0);
+	type showahead_timestamp_t				is array (0 to INTERLEAVING_FACTOR-1) of unsigned(COMP_TIMESTAMP_WIDTH-1 downto 0);
 	type pipe_de2wr_t is record
 		eop_all_valid			: std_logic;
 		eop_all					: std_logic;
@@ -439,8 +443,8 @@ architecture rtl of feb_frame_assembly is
 	-- ----------------------------------------------
 	-- transmission_timestamp_poster (datapath)
 	-- ----------------------------------------------
-	signal frame_cnt						: unsigned(35 downto 0);
-    signal frame_cnt_d1                    : unsigned(35 downto 0);
+	signal frame_cnt						: unsigned(43-COMP_TIMESTAMP_WIDTH downto 0); -- 36 bits for 256 N_SHD, 37 bits for 128 N_SHD
+    signal frame_cnt_d1                     : unsigned(43-COMP_TIMESTAMP_WIDTH downto 0);
 	signal gts_8n_in_transmission			: std_logic_vector(47 downto 0);
     
     -- ------------------
@@ -1051,9 +1055,9 @@ begin
                     -- -> the subheader
                     -- -> latch once (new ts)
                     -- -> not empty (fifo q is valid)
-					if (xcvr_word_is_subheader(i) = '1' and unsigned(sub_fifos(i).q(31 downto 24)) /= showahead_timestamp(i) and sub_fifos(i).rdempty /= '1') then -- if new ts has overturned, it can be not latched, thus blocking
+					if (xcvr_word_is_subheader(i) = '1' and unsigned(sub_fifos(i).q(24+COMP_TIMESTAMP_WIDTH-1 downto 24)) /= showahead_timestamp(i) and sub_fifos(i).rdempty /= '1') then -- if new ts has overturned, it can be not latched, thus blocking
 						-- latch the showahead ts of the subfifo and raise flag 
-						showahead_timestamp(i)		    <= unsigned(sub_fifos(i).q(31 downto 24)); 
+						showahead_timestamp(i)		    <= unsigned(sub_fifos(i).q(24+COMP_TIMESTAMP_WIDTH-1 downto 24)); 
                         showahead_timestamp_valid(i)    <= '1';
                         -- pipeline 
 						showahead_timestamp_last(i)	            <= showahead_timestamp(i); -- remember the last value
@@ -1147,7 +1151,7 @@ begin
     begin
         -- derive input signals
         for i in 0 to N_LANE-1 loop
-            search_for_extreme_in_data((i+1)*9-1 downto i*9)           <= scheduler_overflow_flags(i) & std_logic_vector(showahead_timestamp(i));
+            search_for_extreme_in_data((i+1)*SEARCH_MIN_ELEMENT_SZ_BITS-1 downto i*SEARCH_MIN_ELEMENT_SZ_BITS)           <= scheduler_overflow_flags(i) & std_logic_vector(showahead_timestamp(i));
         end loop;
         
     end process;                                                                              
@@ -1409,8 +1413,9 @@ begin
 								main_fifo_wr_valid					<= '1';
 							when 2 => -- data header 1
                                       -- ts [15:0] | package count [15:0]
-								main_fifo_wr_data(31 downto 28)		<= gts_8n_in_transmission(15 downto 12); -- gts[47:12] (frame_cnt) : leading gts for this frame. while subframe contains gts[11:4], hits contains gts[3:0]
-								main_fifo_wr_data(27 downto 16)     <= (others => '0'); -- explicitly zeros (gts_8n_in_transmission is reference for its subheader and hits ts) 
+                                      -- for 256 N_SHD, only [31:28] is unmasked. for 128 N_SHD, only [31:27] is unmasked
+								main_fifo_wr_data(31 downto 16)		<= gts_8n_in_transmission(15 downto 0); -- gts[47:12] (frame_cnt) : leading gts for this frame. while subframe contains gts[11:4], hits contains gts[3:0]
+								main_fifo_wr_data(20+COMP_TIMESTAMP_WIDTH-1 downto 16)     <= (others => '0'); -- explicitly mask to zeros (gts_8n_in_transmission is reference for its subheader and hits ts) 
                                                                                         -- ex: hit ts = gts_8n (ofst to mu3e global start-of-run) + subheader_ts (ofst to h.) + hit_ts (ofst to subh.)
                                 main_fifo_wr_data(15 downto 0)		<= std_logic_vector(frame_cnt_d1)(15 downto 0); -- package_cnt [15:0] : if some main frames are skipped, the frame_cnt might mis-match with the gts_8n lower bits.
                                                                                                                  -- the up stream needs to log and handle this error. 
@@ -1614,10 +1619,11 @@ begin
 				end if;
                 
 			end if;
-            gts_8n_in_transmission(11 downto 4)		    <= std_logic_vector(x_gts_counter)(11 downto 4); -- this part is for TTL
-            frame_cnt_d1                                <= frame_cnt; -- need for timing
-            gts_8n_in_transmission(47 downto 12)	    <= std_logic_vector(frame_cnt); -- this part is used for main frame timestamp (reference point for its subframe and hits) 
-		end if;
+            gts_8n_in_transmission(4+COMP_TIMESTAMP_WIDTH-1 downto 4)		    <= std_logic_vector(x_gts_counter)(4+COMP_TIMESTAMP_WIDTH-1 downto 4); -- 11:4 for 8 bit N_SHD. this part is for TTL 
+            frame_cnt_d1                                                        <= frame_cnt; -- need for timing. 36 bit for 256 N_SHD, 37 bit for 128 N_SHD
+            gts_8n_in_transmission(47 downto 4+COMP_TIMESTAMP_WIDTH)	        <= std_logic_vector(frame_cnt); -- 47:12 for 8 bit N_SHD. this part is used for main frame timestamp (reference point for its subframe and hits) 
+                
+        end if;
 	end process;
 	
 	proc_transmission_timestamp_poster_comb : process (all)

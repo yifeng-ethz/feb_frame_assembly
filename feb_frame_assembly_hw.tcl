@@ -15,6 +15,7 @@
 # 25.0.0505 - use pipeline search 
 # 25.0.0701 - enlarge subfifo 512 to 1024 for new scheduler (revoked)
 # 25.0.0710 - add debug interfaces
+# 25.0.0813 - support 128/256 subheader packets between two header packets
 
 ################################################
 # request TCL package from ACDS 16.1
@@ -93,6 +94,21 @@ This affects the stall time and latency of the output main frame, so you have to
 </html>"
 set_parameter_property INTERLEAVING_FACTOR LONG_DESCRIPTION $dscpt
 set_parameter_property INTERLEAVING_FACTOR DESCRIPTION $dscpt
+
+add_parameter N_SHD NATURAL 
+set_parameter_property N_SHD DEFAULT_VALUE 256
+set_parameter_property N_SHD DISPLAY_NAME "Number of Subheader Packets Between Header Packets"
+set_parameter_property N_SHD UNITS None
+set_parameter_property N_SHD ALLOWED_RANGES {128 256 512}
+set_parameter_property N_SHD HDL_PARAMETER true
+set dscpt \
+"<html>
+Enter the number of subheaders under one header packet, i.e., between two header packets. <br>
+More subheaders will be regarded as new header in track header = off mode. <br>
+Adjusting this parameter will require changing the code logic <br>
+</html>"
+set_parameter_property N_SHD LONG_DESCRIPTION $dscpt
+set_parameter_property N_SHD DESCRIPTION $dscpt
 
 
 add_parameter DEBUG NATURAL 1
