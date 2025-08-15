@@ -7,6 +7,8 @@
 --      Date: May 5, 2025
 -- Revision: 1.2 (add debug interfaces and refining read sub fifo switching speed)
 --      Date: Jul 10, 2025
+-- Revision: 1.3 (support 128/256 subheader packets between two header packets)
+--      Date: Aug 13, 2025
 -- =========
 -- Description:	[Front-end Board Frame Assembly] 
 --		This IP is generates the Mu3e standard data frame given input of sub-frames.
