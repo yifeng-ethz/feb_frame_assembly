@@ -53,8 +53,8 @@ add_fileset_file feb_frame_assembly.vhd VHDL PATH feb_frame_assembly.vhd TOP_LEV
 # +---------------------+
 # | the sub frame fifos |
 # +---------------------+
-add_fileset_file alt_dcfifo_w40d256.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256.vhd
 add_fileset_file alt_dcfifo_w40d256_patched.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256_patched.vhd
+add_fileset_file alt_dcfifo_w40d256.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256.vhd
 # +----------------------+
 # |  the sync gts (d->x) |
 # +----------------------+
@@ -419,6 +419,5 @@ set_interface_property debug_delay8loss dataBitsPerSymbol 16
 
 add_interface_port debug_delay8loss aso_debug_delay8loss_valid valid Output 1
 add_interface_port debug_delay8loss aso_debug_delay8loss_data data Output 16
-
 
 
