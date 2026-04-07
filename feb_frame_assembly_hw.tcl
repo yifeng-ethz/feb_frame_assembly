@@ -16,11 +16,12 @@
 # 25.0.0701 - enlarge subfifo 512 to 1024 for new scheduler (revoked)
 # 25.0.0710 - add debug interfaces
 # 25.0.0813 - support 128/256 subheader packets between two header packets
+# 26.0.0328 - add ts_delta debug stream and patched subfifo helper for feb_system_v2
 
 ################################################
 # request TCL package from ACDS 16.1
 ################################################
-package require qsys
+package require -exact qsys 16.1
 
 
 ################################################
@@ -28,7 +29,7 @@ package require qsys
 ################################################
 set_module_property DESCRIPTION "Generates the Mu3e standard data frame given input of sub-frames of multiple ring-CAM(s)"
 set_module_property NAME feb_frame_assembly
-set_module_property VERSION 25.0.0710
+set_module_property VERSION 26.0.328
 set_module_property INTERNAL false
 set_module_property OPAQUE_ADDRESS_MAP true
 set_module_property GROUP "Mu3e Data Plane/Modules"
@@ -53,6 +54,7 @@ add_fileset_file feb_frame_assembly.vhd VHDL PATH feb_frame_assembly.vhd TOP_LEV
 # | the sub frame fifos |
 # +---------------------+
 add_fileset_file alt_dcfifo_w40d256.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256.vhd
+add_fileset_file alt_dcfifo_w40d256_patched.vhd VHDL PATH alt_fifos/alt_dcfifo_w40d256/alt_dcfifo_w40d256_patched.vhd
 # +----------------------+
 # |  the sync gts (d->x) |
 # +----------------------+
@@ -373,6 +375,17 @@ set_interface_property debug_burst dataBitsPerSymbol 16
 add_interface_port debug_burst aso_debug_burst_valid valid Output 1
 add_interface_port debug_burst aso_debug_burst_data data Output 16
 
+# 
+# connection point ts_delta
+# 
+add_interface ts_delta avalon_streaming start
+set_interface_property ts_delta associatedClock xcvr_clock
+set_interface_property ts_delta associatedReset xcvr_reset
+set_interface_property ts_delta dataBitsPerSymbol 16
+
+add_interface_port ts_delta aso_ts_delta_valid valid Output 1
+add_interface_port ts_delta aso_ts_delta_data data Output 16
+
 
 #
 # connection point debug_filllevel
@@ -406,7 +419,6 @@ set_interface_property debug_delay8loss dataBitsPerSymbol 16
 
 add_interface_port debug_delay8loss aso_debug_delay8loss_valid valid Output 1
 add_interface_port debug_delay8loss aso_debug_delay8loss_data data Output 16
-
 
 
 

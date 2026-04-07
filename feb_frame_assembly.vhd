@@ -128,6 +128,10 @@ port (
     aso_debug_burst_valid		: out std_logic;
 	aso_debug_burst_data		: out std_logic_vector(15 downto 0);
 
+    -- AVST <ts_delta>
+    aso_ts_delta_valid          : out std_logic;
+    aso_ts_delta_data           : out std_logic_vector(15 downto 0);
+
     -- AVST <debug_filllevel>
     aso_debug_filllevel_valid	: out std_logic; -- always valid
     aso_debug_filllevel_data	: out std_logic_vector(15 downto 0); -- [8:0] sub_fifo used words (only subfifo 0)
@@ -150,6 +154,25 @@ end entity feb_frame_assembly;
 
 
 architecture rtl of feb_frame_assembly is 
+    function signmag_to_twos_comp16(
+        signmag_in : std_logic_vector
+    ) return std_logic_vector is
+        variable magnitude_v : unsigned(14 downto 0) := (others => '0');
+        variable signed_v    : signed(15 downto 0) := (others => '0');
+    begin
+        if signmag_in'length > 1 then
+            magnitude_v := resize(unsigned(signmag_in(signmag_in'high - 1 downto 0)), magnitude_v'length);
+        end if;
+
+        if signmag_in(signmag_in'high) = '1' then
+            signed_v := -resize(signed('0' & magnitude_v), signed_v'length);
+        else
+            signed_v := resize(signed('0' & magnitude_v), signed_v'length);
+        end if;
+
+        return std_logic_vector(signed_v);
+    end function signmag_to_twos_comp16;
+
 	-- ------------------------------------
 	-- globle constant
 	-- ------------------------------------
@@ -223,14 +246,27 @@ architecture rtl of feb_frame_assembly is
 		rdusedw		: std_logic_vector(SUB_FIFO_USEDW_WIDTH-1 downto 0);
 	end record;
 	type sub_fifos_t				is array (0 to INTERLEAVING_FACTOR-1) of sub_fifo_t;
+    type sub_fifo_data_arr_t         is array (0 to INTERLEAVING_FACTOR-1) of std_logic_vector(SUB_FIFO_DATA_WIDTH-1 downto 0);
+    type sub_fifo_usedw_arr_t        is array (0 to INTERLEAVING_FACTOR-1) of std_logic_vector(SUB_FIFO_USEDW_WIDTH-1 downto 0);
 	
 	-- signals
 	signal sub_fifos				: sub_fifos_t;
+    signal sub_fifo_wrreq_s          : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
+    signal sub_fifo_rdreq_s          : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
+    signal sub_fifo_data_s           : sub_fifo_data_arr_t;
+    signal sub_fifo_q_s              : sub_fifo_data_arr_t;
+    signal sub_fifo_rdusedw_s        : sub_fifo_usedw_arr_t;
+    signal sub_fifo_wrusedw_s        : sub_fifo_usedw_arr_t;
+    signal sub_fifo_rdempty_s        : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
+    signal sub_fifo_rdfull_s         : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
+    signal sub_fifo_wrempty_s        : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
+    signal sub_fifo_wrfull_s         : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
 	
 	-- declaration
-	component alt_dcfifo_w40d256 
+	component alt_dcfifo_w40d256_patched
 	PORT
 	(
+		aclr		: IN STD_LOGIC := '0';
 		data		: IN STD_LOGIC_VECTOR (SUB_FIFO_DATA_WIDTH-1 DOWNTO 0);
 		rdclk		: IN STD_LOGIC ;
 		rdreq		: IN STD_LOGIC ;
@@ -252,12 +288,12 @@ architecture rtl of feb_frame_assembly is
 	-- ------------------------------------
 	constant LANE_INDEX_WIDTH					: natural := integer(ceil(log2(real(INTERLEAVING_FACTOR)))); -- 2
 	constant SUBHEADER_TIMESTAMP_WIDTH			: natural := 8;
+    constant TIMESTAMP_WIDTH                   : natural := SUBHEADER_TIMESTAMP_WIDTH;
     -- constants
-    constant COMP_TIMESTAMP_WIDTH		: natural := integer(ceil(log2(real(N_SHD)))); -- 8 for 256 subheaders, 7 for 128 subheaders
     constant N_LANE					    : natural := INTERLEAVING_FACTOR; -- 4
     -- types
-    type timestamp_t				is array (0 to N_LANE-1) of unsigned(COMP_TIMESTAMP_WIDTH downto 0); -- + 1 bit
-    type comp_tmp_t					is array (0 to N_LANE-2) of unsigned(COMP_TIMESTAMP_WIDTH downto 0); -- + 1 bit
+    type timestamp_t				is array (0 to N_LANE-1) of unsigned(TIMESTAMP_WIDTH downto 0); -- + 1 bit
+    type comp_tmp_t					is array (0 to N_LANE-2) of unsigned(TIMESTAMP_WIDTH downto 0); -- + 1 bit
     type index_tmp_t				is array (0 to N_LANE-2) of unsigned(LANE_INDEX_WIDTH-1 downto 0); 
     -- signals
     signal timestamp				: timestamp_t;
@@ -276,8 +312,8 @@ architecture rtl of feb_frame_assembly is
     -- search_for_extreme (pipeline)
     -- ------------------------------------
     constant SEARCH_MIN_N_ELEMENT               : natural := N_LANE;
-    constant SEARCH_MIN_TIMESTAMP_WDITH         : natural := integer(ceil(log2(real(N_SHD)))); -- 8 for 256 subheaders, 7 for 128 subheaders
-    constant SEARCH_MIN_ELEMENT_SZ_BITS         : natural := SEARCH_MIN_TIMESTAMP_WDITH + 1; -- default : 8 of data + 1 of overflow flag
+    constant SEARCH_MIN_TIMESTAMP_WDITH         : natural := TIMESTAMP_WIDTH;
+    constant SEARCH_MIN_ELEMENT_SZ_BITS         : natural := SEARCH_MIN_TIMESTAMP_WDITH + 1; -- 8 bits of data + 1 overflow flag
     constant SEARCH_MIN_ARRAY_SZ_BITS           : natural := SEARCH_MIN_N_ELEMENT * SEARCH_MIN_ELEMENT_SZ_BITS;
     constant SEARCH_MIN_ELEMENT_INDEX_BITS      : natural := integer(ceil(log2(real(SEARCH_MIN_N_ELEMENT)))); -- 2 for 4 lanes
     
@@ -345,7 +381,7 @@ architecture rtl of feb_frame_assembly is
 	-- frame_delimiter_marker
 	-- ---------------------------
 	-- types
-	type showahead_timestamp_t				is array (0 to INTERLEAVING_FACTOR-1) of unsigned(COMP_TIMESTAMP_WIDTH-1 downto 0);
+	type showahead_timestamp_t				is array (0 to INTERLEAVING_FACTOR-1) of unsigned(TIMESTAMP_WIDTH-1 downto 0);
 	type pipe_de2wr_t is record
 		eop_all_valid			: std_logic;
 		eop_all					: std_logic;
@@ -361,6 +397,7 @@ architecture rtl of feb_frame_assembly is
 	signal xcvr_word_is_subtrailer			: word_is_subtrailer_t;
     signal showahead_timestamp_valid        : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
     signal showahead_timestamp_last_valid   : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
+    signal scheduler_overflow_latched      : std_logic_vector(INTERLEAVING_FACTOR-1 downto 0);
 	
 	
 	-- --------------------------------------------
@@ -445,8 +482,8 @@ architecture rtl of feb_frame_assembly is
 	-- ----------------------------------------------
 	-- transmission_timestamp_poster (datapath)
 	-- ----------------------------------------------
-	signal frame_cnt						: unsigned(43-COMP_TIMESTAMP_WIDTH downto 0); -- 36 bits for 256 N_SHD, 37 bits for 128 N_SHD
-    signal frame_cnt_d1                     : unsigned(43-COMP_TIMESTAMP_WIDTH downto 0);
+	signal frame_cnt						: unsigned(43-TIMESTAMP_WIDTH downto 0);
+    signal frame_cnt_d1                     : unsigned(43-TIMESTAMP_WIDTH downto 0);
 	signal gts_8n_in_transmission			: std_logic_vector(47 downto 0);
     
     -- ------------------
@@ -622,7 +659,7 @@ begin
     begin
         -- filllevel
         aso_debug_filllevel_valid       <= '1';
-        aso_debug_filllevel_data        <= std_logic_vector(to_unsigned(to_integer(unsigned(sub_fifos(0).wrusedw)), 16)); -- subfifo 0 only, used words in subfifo 0
+        aso_debug_filllevel_data        <= std_logic_vector(to_unsigned(to_integer(unsigned(sub_fifo_wrusedw_s(0))), 16)); -- subfifo 0 only, used words in subfifo 0
 
         -- loss at filllevel
         if (subfifo_trans_status(0) = MASKED and asi_hit_type2_0_valid = '1') then 
@@ -630,7 +667,7 @@ begin
         else 
             aso_debug_loss8fill_valid   <= '0';
         end if;
-        aso_debug_loss8fill_data        <= std_logic_vector(to_unsigned(to_integer(unsigned(sub_fifos(0).wrusedw)), 16)); -- subfifo 0 only, used words in subfifo 0
+        aso_debug_loss8fill_data        <= std_logic_vector(to_unsigned(to_integer(unsigned(sub_fifo_wrusedw_s(0))), 16)); -- subfifo 0 only, used words in subfifo 0
 
         -- delay at loss
         if (ingress_delay_valid = '1' and ingress_data_masked_d1 = '1') then 
@@ -638,7 +675,7 @@ begin
         else 
             aso_debug_delay8loss_valid   <= '0';
         end if;
-        aso_debug_delay8loss_data    <= std_logic_vector(to_unsigned(to_integer(unsigned(ingress_delay_data)), 16)); -- subfifo 0 only, delay of hits or shd when dropped (only subfifo 0), truncate from 48 -> 16 bits
+        aso_debug_delay8loss_data    <= std_logic_vector(resize(unsigned(ingress_delay_data), 16)); -- subfifo 0 only, delay of hits or shd when dropped (only subfifo 0), truncate from 48 -> 16 bits
 
     end process;
 
@@ -852,21 +889,22 @@ begin
 	-- ** instantiation **
 	gen_sub_fifos : for i in 0 to INTERLEAVING_FACTOR-1 generate 
 		-- used one more bit for the usedw
-		sub_frame_fifo : alt_dcfifo_w40d256 PORT MAP (
+		sub_frame_fifo : alt_dcfifo_w40d256_patched PORT MAP (
+			aclr	 => i_rst_datapath or i_rst_xcvr,
 			-- write side (datapath clock)
 			wrclk	 => i_clk_datapath,
-			wrreq	 => sub_fifos(i).wrreq,
-			data	 => sub_fifos(i).data,
-			wrempty	 => sub_fifos(i).wrempty,
-			wrfull	 => sub_fifos(i).wrfull,
-			wrusedw	 => sub_fifos(i).wrusedw,
+			wrreq	 => sub_fifo_wrreq_s(i),
+			data	 => sub_fifo_data_s(i),
+			wrempty	 => sub_fifo_wrempty_s(i),
+			wrfull	 => sub_fifo_wrfull_s(i),
+			wrusedw	 => sub_fifo_wrusedw_s(i),
 			-- read side (xcvr clock)
 			rdclk	 => i_clk_xcvr,
-			rdreq	 => sub_fifos(i).rdreq,
-			q	 	 => sub_fifos(i).q,
-			rdempty	 => sub_fifos(i).rdempty,
-			rdfull	 => sub_fifos(i).rdfull,
-			rdusedw	 => sub_fifos(i).rdusedw
+			rdreq	 => sub_fifo_rdreq_s(i),
+			q	 	 => sub_fifo_q_s(i),
+			rdempty	 => sub_fifo_rdempty_s(i),
+			rdfull	 => sub_fifo_rdfull_s(i),
+			rdusedw	 => sub_fifo_rdusedw_s(i)
 		);
 		-- io mapping (expand 2d array to 1d list)
 		--infifo_rd_engine_subheader_list(i)		<= sub_fifos(i).q(asi_hit_type2_0_data'high downto 0);
@@ -908,7 +946,7 @@ begin
 					case subfifo_trans_status(i) is 
 						when IDLE =>
 							if (word_is_subheader(i) = '1') then
-								if (sub_fifos(i).wrfull = '0') then -- subheader gets in the fifo
+								if (sub_fifo_wrfull_s(i) = '0') then -- subheader gets in the fifo
 									debug_msg.declared_hit_cnt(i)	<= debug_msg.declared_hit_cnt(i) + unsigned(subheader_hit_cnt_comb(i)); -- record the declared hit count
 									subheader_hit_cnt(i)			<= subheader_hit_cnt_comb(i); -- record for this subframe period
 									if (word_is_subtrailer(i) = '1') then -- not hit in this subframe
@@ -922,8 +960,8 @@ begin
 								end if;
 							end if;  
 						when TRANSMISSION =>
-							if (sub_fifos(i).wrreq = '1') then -- hits gets write to fifo
-                                if (sub_fifos(i).wrfull = '0') then -- ok 
+							if (sub_fifo_wrreq_s(i) = '1') then -- hits gets write to fifo
+                                if (sub_fifo_wrfull_s(i) = '0') then -- ok 
                                     debug_msg.actual_hit_cnt(i)		<= debug_msg.actual_hit_cnt(i) + 1; -- incr actual hit counter
                                 else -- overflow (fifo ov protection : enabled)
                                     debug_msg.missing_hit_cnt(i)	<= debug_msg.missing_hit_cnt(i) + 1; -- incr missing hit counter (2)
@@ -989,26 +1027,26 @@ begin
 		-- input direct drives the write port
 		begin
 			-- default
-			sub_fifos(i).data(avst_inputs(i).data'high downto 0)		<= avst_inputs(i).data; -- connect data input directly to fifo (35 downto 0)
-			sub_fifos(i).data(avst_inputs(i).data'high+1)				<= avst_inputs(i).endofpacket; -- bit 36
-			sub_fifos(i).data(avst_inputs(i).data'high+2)				<= avst_inputs(i).startofpacket; -- bit 37
-			sub_fifos(i).data(sub_fifos(i).data'high downto avst_inputs(i).data'high+3)	<= (others => '0'); -- bit 38-39 (free to allocate, TDB)
+			sub_fifo_data_s(i)(avst_inputs(i).data'high downto 0)		<= avst_inputs(i).data; -- connect data input directly to fifo (35 downto 0)
+			sub_fifo_data_s(i)(avst_inputs(i).data'high+1)				<= avst_inputs(i).endofpacket; -- bit 36
+			sub_fifo_data_s(i)(avst_inputs(i).data'high+2)				<= avst_inputs(i).startofpacket; -- bit 37
+			sub_fifo_data_s(i)(sub_fifo_data_s(i)'high downto avst_inputs(i).data'high+3)	<= (others => '0'); -- bit 38-39 (free to allocate, TDB)
 			-- assert backpressure to the ring-buffer-cam, ready latency is 0
 			if (subfifo_trans_status(i) /= MASKED) then 
 				if (avst_inputs(i).valid = '1') then -- write if input is valid. if full, the fifo itself will take care (ignoring them)
-					sub_fifos(i).wrreq		<= '1';
+					sub_fifo_wrreq_s(i)		<= '1';
 				else
-					sub_fifos(i).wrreq		<= '0';
+					sub_fifo_wrreq_s(i)		<= '0';
 				end if;
 			else -- fifo is full or hits are masked
 				
 				-- if the subheader is in, hits can be accepted (if not full). if subheader is not in, subsequent hits are ignored for sure. 
-				sub_fifos(i).wrreq		<= '0'; -- do not write
+				sub_fifo_wrreq_s(i)		<= '0'; -- do not write
 			end if;
             
             -- run control (flush subfifo (1))
             if (d_run_state_cmd = RUN_PREPARE) then 
-                sub_fifos(i).wrreq		<= '0';
+                sub_fifo_wrreq_s(i)		<= '0';
             end if;
             
             
@@ -1036,6 +1074,7 @@ begin
                     pipe_de2wr.eop_all_valid    <= '0';
                     showahead_timestamp_valid(i)        <= '0';
                     showahead_timestamp_last_valid(i)   <= '0';
+                    scheduler_overflow_latched(i)      <= '0';
                 end loop;
 			else 
                 -- default
@@ -1046,6 +1085,10 @@ begin
                     -- deassert valid of showahead timestamp of this lane when latched
                     -- ------------------------------------------------------------------------
                     if (main_fifo_wrreq = '1' and main_fifo_din(37) = '1' and to_integer(unsigned(search_for_extreme_out_data(main_fifo_decision'length-1 downto 0))) = i) then 
+                        -- Preserve the previously scheduled head across an empty-cycle gap so
+                        -- the next head can still detect timestamp wrap on this lane.
+                        showahead_timestamp_last(i)         <= showahead_timestamp(i);
+                        showahead_timestamp_last_valid(i)   <= showahead_timestamp_valid(i);
                         showahead_timestamp_valid(i)        <= '0';
                     end if;
                 
@@ -1057,19 +1100,24 @@ begin
                     -- -> the subheader
                     -- -> latch once (new ts)
                     -- -> not empty (fifo q is valid)
-					if (xcvr_word_is_subheader(i) = '1' and unsigned(sub_fifos(i).q(24+COMP_TIMESTAMP_WIDTH-1 downto 24)) /= showahead_timestamp(i) and sub_fifos(i).rdempty /= '1') then -- if new ts has overturned, it can be not latched, thus blocking
-						-- latch the showahead ts of the subfifo and raise flag 
-						showahead_timestamp(i)		    <= unsigned(sub_fifos(i).q(24+COMP_TIMESTAMP_WIDTH-1 downto 24)); 
+					if (xcvr_word_is_subheader(i) = '1' and
+					    sub_fifo_rdempty_s(i) /= '1' and
+					    (showahead_timestamp_valid(i) = '0' or
+					     unsigned(sub_fifo_q_s(i)(24+TIMESTAMP_WIDTH-1 downto 24)) /= showahead_timestamp(i))) then
+						showahead_timestamp(i)		    <= unsigned(sub_fifo_q_s(i)(24+TIMESTAMP_WIDTH-1 downto 24)); 
                         showahead_timestamp_valid(i)    <= '1';
                         -- pipeline 
 						showahead_timestamp_last(i)	            <= showahead_timestamp(i); -- remember the last value
-                        showahead_timestamp_last_valid(i)       <= showahead_timestamp_valid(i);
+                        showahead_timestamp_last_valid(i)       <= showahead_timestamp_valid(i) or showahead_timestamp_last_valid(i);
 					end if;
                     
                     -- clear last, so overflow flags will be clear
                     if (trailer_generated = '1') then 
                         showahead_timestamp_last(i)         <= (others => '0');
                         showahead_timestamp_last_valid(i)   <= '0';
+                        scheduler_overflow_latched(i)      <= '0';
+                    elsif (scheduler_overflow_flags(i) = '1') then
+                        scheduler_overflow_latched(i)      <= '1';
                     end if;
                     
                     -- --------------------------------------
@@ -1083,7 +1131,7 @@ begin
                     -- ---------------------
                     -- -> all fifo must be non-empty (at least a pending subframe inside) 
                     
-                    if (sub_fifos(i).rdempty = '1') then -- need to delay empty signal as the q has not been latched by scheduler
+                    if (sub_fifo_rdempty_s(i) = '1') then -- need to delay empty signal as the q has not been latched by scheduler
                         scheduler_out_valid     <= '0'; -- void it -> let main fifo write logic to wait until the selection_comb is valid
                     end if;
                     
@@ -1109,7 +1157,7 @@ begin
         -- derive overflow flag of showahead timestamp snoop from subfifo
         -- -----------------------------------------------------------------
         for i in 0 to INTERLEAVING_FACTOR-1 loop
-            if (showahead_timestamp(i) < showahead_timestamp_last(i)) then 
+            if (showahead_timestamp_valid(i) = '1' and showahead_timestamp_last_valid(i) = '1' and showahead_timestamp(i) < showahead_timestamp_last(i)) then 
                 scheduler_overflow_flags(i)     <= '1';
             else
                 scheduler_overflow_flags(i)     <= '0';
@@ -1120,7 +1168,7 @@ begin
         -- pipe with main fifo write logic
         -- -------------------------------------
         -- data 
-        if (and_reduce(scheduler_overflow_flags) = '1') then -- triggered by this, only last 1 cycle
+        if (and_reduce(showahead_timestamp_valid) = '1' and and_reduce(scheduler_overflow_flags or scheduler_overflow_latched) = '1') then -- all lanes overflowed
             pipe_de2wr.eop_all		<= '1'; -- inter-fsm communication pipe, set by overflow flags are set for all lanes, enough for it to set
         else
             pipe_de2wr.eop_all		<= '0'; 
@@ -1133,8 +1181,8 @@ begin
 		proc_word_is_subheader_xcvr : process (all)
 		begin
 			xcvr_word_is_subheader(i)		<= '0';
-			if (sub_fifos(i).rdempty = '0') then -- check with valid
-				if (sub_fifos(i).q(SUB_FIFO_SOP_LOC) = '1') then 
+			if (sub_fifo_rdempty_s(i) = '0') then -- check with valid
+				if (sub_fifo_q_s(i)(SUB_FIFO_SOP_LOC) = '1') then 
 					xcvr_word_is_subheader(i)		<= '1';
 				end if;
 			end if;
@@ -1153,7 +1201,7 @@ begin
     begin
         -- derive input signals
         for i in 0 to N_LANE-1 loop
-            search_for_extreme_in_data((i+1)*SEARCH_MIN_ELEMENT_SZ_BITS-1 downto i*SEARCH_MIN_ELEMENT_SZ_BITS)           <= scheduler_overflow_flags(i) & std_logic_vector(showahead_timestamp(i));
+            search_for_extreme_in_data((i+1)*SEARCH_MIN_ELEMENT_SZ_BITS-1 downto i*SEARCH_MIN_ELEMENT_SZ_BITS)       <= (scheduler_overflow_flags(i) or scheduler_overflow_latched(i)) & std_logic_vector(showahead_timestamp(i));
         end loop;
         
     end process;                                                                              
@@ -1240,7 +1288,7 @@ begin
 	begin
 		-- input timestamp
 		for i in 0 to N_LANE-1 loop
-			timestamp(i)		<= scheduler_overflow_flags(i) & unsigned(showahead_timestamp(i)); -- the overflow lane will be always larger
+			timestamp(i)		<= (scheduler_overflow_flags(i) or scheduler_overflow_latched(i)) & unsigned(showahead_timestamp(i)); -- the overflow lane will be always larger
 		end loop;
 		
 		-- algorithm: finding the smallest element of an array 
@@ -1362,8 +1410,11 @@ begin
 					when IDLE =>
                         -- use the search engine result to grant the right lane and go to appropriate segment of the packet
                         if (header_generated = '0') then  
-                            -- start of frame: go to generate new frame header
-                            main_fifo_wr_status		<= START_OF_FRAME;
+                            if (and_reduce(showahead_timestamp_valid) = '1') then
+                                main_fifo_wr_status     <= START_OF_FRAME;
+                            end if;
+                        elsif (header_generated = '1' and trailer_generated = '0' and x_run_state_cmd /= RUNNING) then
+                            main_fifo_wr_status     <= END_OF_FRAME;
                         elsif (pipe_de2wr.eop_all = '1' and trailer_generated = '0') then 
                             -- end of frame: stop read subfifo, go to eof
                             -- trailer_generated is to avoid deadlock between sof and eof
@@ -1395,7 +1446,7 @@ begin
 --                        end if;
                         
                         -- unset trailer_generated once all subfifo are recovered from ts overflow, this ensures no stuck at sof and eof deadloops
-                        if (or_reduce(scheduler_overflow_flags) = '0') then -- all clear now
+                        if (or_reduce(scheduler_overflow_flags or scheduler_overflow_latched) = '0') then -- all clear now
                             trailer_generated       <= '0';
                         end if;
                         
@@ -1417,9 +1468,9 @@ begin
                                       -- ts [15:0] | package count [15:0]
                                       -- for 256 N_SHD, only [31:28] is unmasked. for 128 N_SHD, only [31:27] is unmasked
 								main_fifo_wr_data(31 downto 16)		<= gts_8n_in_transmission(15 downto 0); -- gts[47:12] (frame_cnt) : leading gts for this frame. while subframe contains gts[11:4], hits contains gts[3:0]
-								main_fifo_wr_data(20+COMP_TIMESTAMP_WIDTH-1 downto 16)     <= (others => '0'); -- explicitly mask to zeros (gts_8n_in_transmission is reference for its subheader and hits ts) 
+								main_fifo_wr_data(20+TIMESTAMP_WIDTH-1 downto 16)          <= (others => '0'); -- explicitly mask to zeros (gts_8n_in_transmission is reference for its subheader and hits ts) 
                                                                                         -- ex: hit ts = gts_8n (ofst to mu3e global start-of-run) + subheader_ts (ofst to h.) + hit_ts (ofst to subh.)
-                                main_fifo_wr_data(15 downto 0)		<= std_logic_vector(frame_cnt_d1)(15 downto 0); -- package_cnt [15:0] : if some main frames are skipped, the frame_cnt might mis-match with the gts_8n lower bits.
+                                main_fifo_wr_data(15 downto 0)		<= std_logic_vector(frame_cnt_d1(15 downto 0)); -- package_cnt [15:0] : if some main frames are skipped, the frame_cnt might mis-match with the gts_8n lower bits.
                                                                                                                  -- the up stream needs to log and handle this error. 
                                                                                                                  -- ex: try to grant more upload bandwidth (limit sc packet bandwidth) to prevent overflow of the main fifo.  
 								main_fifo_wr_valid					<= '1';
@@ -1448,7 +1499,7 @@ begin
                         --      see proc_main_fifo_wr_comb
                         
                         -- escape condition: 
-						if (sub_eop_is_seen = '1') then
+						if (main_fifo_wrreq = '1' and main_fifo_din(SUB_FIFO_EOP_LOC) = '1') then
 							main_fifo_wr_status		        <= IDLE; -- this subframe is read, we can start to calc the next frame in IDLE
                             -- log the subheader count in this main frame
                             main_fifo_log.subheader_cnt     <= main_fifo_log.subheader_cnt + 1;
@@ -1484,7 +1535,7 @@ begin
                             trailer_generated                   <= '1';
                             -- write log -> debug fifo
                             header_fifo_wrreq                   <= '1';
-                            header_fifo_data(30 downto 16)      <= std_logic_vector(main_fifo_log.subheader_cnt)(14 downto 0); -- truncate out bit 15
+                            header_fifo_data(30 downto 16)      <= std_logic_vector(main_fifo_log.subheader_cnt(14 downto 0)); -- truncate out bit 15
                             header_fifo_data(15 downto 0)       <= std_logic_vector(main_fifo_log.hit_cnt);
                         else 
                             main_fifo_wr_status			        <= RESET;
@@ -1517,7 +1568,7 @@ begin
                 -- almost full alert of subfifo
                 -- ---------------------------------
                 for i in 0 to INTERLEAVING_FACTOR-1 loop
-                    if (SUB_FIFO_DEPTH - to_integer(unsigned(sub_fifos(i).rdusedw)) < 5) then 
+                    if (SUB_FIFO_DEPTH - to_integer(unsigned(sub_fifo_rdusedw_s(i))) < 5) then 
                         -- criticl error: subfifo almost full
                         subfifo_msg.subfifo_af_alert(i)	    <= '1';
                     elsif (subfifo_msg.subfifo_af_ack(i) = '1') then 
@@ -1544,17 +1595,17 @@ begin
 		sub_dout				<= (others => '0');
         sub_empty               <= '0';
 		for i in 0 to INTERLEAVING_FACTOR-1 loop
-			sub_fifos(i).rdreq		<= '0'; -- default
+			sub_fifo_rdreq_s(i)		<= '0'; -- default
 			if (main_fifo_wr_status = TRANSMISSION) then 
 				if (to_integer(unsigned(main_fifo_decision)) = i) then -- if selected, connect this sub fifo to main fifo
-					sub_fifos(i).rdreq		<= sub_rdreq;
-					sub_dout				<= sub_fifos(i).q;
-					sub_empty				<= sub_fifos(i).rdempty;
+					sub_fifo_rdreq_s(i)		<= sub_rdreq;
+					sub_dout				<= sub_fifo_q_s(i);
+					sub_empty				<= sub_fifo_rdempty_s(i);
 				end if;
 			end if;
             -- run control (flush subfifo (2))
             if (x_run_state_cmd = RUN_PREPARE) then 
-                sub_fifos(i).rdreq      <= '1';
+                sub_fifo_rdreq_s(i)     <= '1';
             end if;
             
 		end loop;
@@ -1621,9 +1672,11 @@ begin
 				end if;
                 
 			end if;
-            gts_8n_in_transmission(4+COMP_TIMESTAMP_WIDTH-1 downto 4)		    <= std_logic_vector(x_gts_counter)(4+COMP_TIMESTAMP_WIDTH-1 downto 4); -- 11:4 for 8 bit N_SHD. this part is for TTL 
-            frame_cnt_d1                                                        <= frame_cnt; -- need for timing. 36 bit for 256 N_SHD, 37 bit for 128 N_SHD
-            gts_8n_in_transmission(47 downto 4+COMP_TIMESTAMP_WIDTH)	        <= std_logic_vector(frame_cnt); -- 47:12 for 8 bit N_SHD. this part is used for main frame timestamp (reference point for its subframe and hits) 
+            gts_8n_in_transmission(4+TIMESTAMP_WIDTH-1 downto 4)		        <= std_logic_vector(x_gts_counter(4+TIMESTAMP_WIDTH-1 downto 4)); -- 11:4 for 8-bit subheader timestamp. this part is for TTL 
+            -- Ensure unused fine timestamp bits are known (avoids X-propagation into debug header 1 in simulation).
+            gts_8n_in_transmission(3 downto 0)                                  <= (others => '0');
+            frame_cnt_d1                                                        <= frame_cnt; -- need for timing
+            gts_8n_in_transmission(47 downto 4+TIMESTAMP_WIDTH)	                <= std_logic_vector(frame_cnt); -- 47:12 for 8-bit subheader timestamp. this part is used for main frame timestamp (reference point for its subframe and hits) 
                 
         end if;
 	end process;
@@ -2045,7 +2098,7 @@ begin
                 -- compound the 48 ts for each hits
                 if (debug_ts_valid = '1') then 
                     aso_debug_ts_valid      <= '1';
-                    aso_debug_ts_data       <= std_logic_vector(x_gts_counter - unsigned(debug_ts_hit_global))(aso_debug_ts_data'high downto 0);
+                    aso_debug_ts_data       <= std_logic_vector(resize(x_gts_counter - unsigned(debug_ts_hit_global), aso_debug_ts_data'length));
                 end if;
                 
              
@@ -2077,6 +2130,7 @@ begin
                 egress_valid                <= '0';
                 delta_valid                 <= '0';
                 aso_debug_burst_valid       <= '0';
+                aso_ts_delta_valid          <= '0';
                 -- --------------
                 -- latch new 
                 -- --------------
@@ -2099,14 +2153,14 @@ begin
                     if (egress_timestamp(0) >= egress_timestamp(1)) then 
                         -- sorted
                         delta_timestamp(delta_timestamp'high)               <= '0';
-                        delta_timestamp(delta_timestamp'high-1 downto 0)    <= std_logic_vector(unsigned(egress_timestamp(0)) - unsigned(egress_timestamp(1)))(delta_timestamp'high-1 downto 0); -- delta_timestamp = Hit_{t+1} - Hit_{t}
+                        delta_timestamp(delta_timestamp'high-1 downto 0)    <= std_logic_vector(resize(unsigned(egress_timestamp(0)) - unsigned(egress_timestamp(1)), delta_timestamp'length-1)); -- delta_timestamp = Hit_{t+1} - Hit_{t}
                     else 
                         -- unsorted
                         delta_timestamp(delta_timestamp'high)               <= '1';
-                        delta_timestamp(delta_timestamp'high-1 downto 0)    <= std_logic_vector(unsigned(egress_timestamp(1)) - unsigned(egress_timestamp(0)))(delta_timestamp'high-1 downto 0);
+                        delta_timestamp(delta_timestamp'high-1 downto 0)    <= std_logic_vector(resize(unsigned(egress_timestamp(1)) - unsigned(egress_timestamp(0)), delta_timestamp'length-1));
                     end if;
                     -- unsigned sub.
-                    delta_arrival               <= std_logic_vector(unsigned(egress_arrival(0)) - unsigned(egress_arrival(1)))(delta_arrival'high downto 0); -- delta_arrival = Hit_{t+1} - Hit_{t}
+                    delta_arrival               <= std_logic_vector(resize(unsigned(egress_arrival(0)) - unsigned(egress_arrival(1)), delta_arrival'length)); -- delta_arrival = Hit_{t+1} - Hit_{t}
                     --
                     delta_valid                 <= '1';
                 end if;
@@ -2122,16 +2176,20 @@ begin
                     aso_debug_burst_data(7 downto 0)            <= delta_arrival(delta_arrival'high downto delta_arrival'high-7);
                     --
                     aso_debug_burst_valid                       <= '1';
+                    aso_ts_delta_data                           <= signmag_to_twos_comp16(delta_timestamp);
+                    aso_ts_delta_valid                          <= '1';
                 end if;
              else 
                 -- default
                 egress_valid                <= '0';
                 delta_valid                 <= '0';
                 aso_debug_burst_valid       <= '0';
+                aso_ts_delta_valid          <= '0';
                 egress_timestamp            <= (others => (others => '0'));
                 egress_arrival              <= (others => (others => '0'));
                 delta_timestamp             <= (others => '0');
                 delta_arrival               <= (others => '0');
+                aso_ts_delta_data           <= (others => '0');
              end if;
         end if;
 
@@ -2139,14 +2197,6 @@ begin
 
 
 end architecture rtl;
-
-
-
-
-
-
-
-
 
 
 

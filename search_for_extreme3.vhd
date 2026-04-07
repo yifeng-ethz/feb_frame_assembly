@@ -53,67 +53,86 @@ end entity search_for_extreme3;
 
 architecture rtl of search_for_extreme3 is 
 
-    constant N_STAGES       : natural := integer(ceil(log2(real(N_ELEMENT)))); -- 4 elements will have 2 stages, 8 elements will have 3 stages, etc.
-    type value_i_t is array (0 to 1) of std_logic_vector(ELEMENT_SZ_BITS-1 downto 0); -- the input value, two inputs for each node
-    type index_i_t is array (0 to 1) of std_logic_vector(ELEMENT_INDEX_BITS-1 downto 0); -- the input index, two inputs for each node
-    type node_t is record
-        value_i     : value_i_t;
-        index_i     : index_i_t; -- the input value and index, two inputs for each node
-        value_o     : std_logic_vector(ELEMENT_SZ_BITS-1 downto 0); -- the output value, one output for each node
-        index_o     : std_logic_vector(ELEMENT_INDEX_BITS-1 downto 0); -- the output index, one output for each node
-    end record;
-    type stage_t is array (0 to 2**N_STAGES-1) of node_t; -- the array of nodes at each stage, each stage has 2^N_STAGES nodes
-    type tree_array_t is array (0 to N_STAGES-1) of stage_t; -- the array of nodes
-    signal node : tree_array_t; -- the array of nodes, each node has two inputs and one output
+    constant N_STAGES : natural := integer(ceil(log2(real(N_ELEMENT))));
+    constant N_POW2   : natural := 2**N_STAGES;
 
-    signal stage_valid : std_logic_vector(N_STAGES-1 downto 0); -- the valid signal for each stage, indicating whether the stage is valid or not
+    subtype value_t is unsigned(ELEMENT_SZ_BITS-1 downto 0);
+    subtype index_t is unsigned(ELEMENT_INDEX_BITS-1 downto 0);
+
+    type value_vec_t is array (0 to N_POW2-1) of value_t;
+    type index_vec_t is array (0 to N_POW2-1) of index_t;
+
+    type value_stage_t is array (0 to N_STAGES) of value_vec_t;
+    type index_stage_t is array (0 to N_STAGES) of index_vec_t;
+
+    signal stage_val  : value_stage_t;
+    signal stage_idx  : index_stage_t;
+    signal valid_pipe : std_logic_vector(N_STAGES downto 0);
 
 begin
-    proc_tree_comparator : process (i_clk)
+    assert N_ELEMENT <= N_POW2
+        report "search_for_extreme3: N_ELEMENT must be <= 2**ceil(log2(N_ELEMENT))"
+        severity failure;
+
+    proc_pipeline : process (i_clk)
+        variable used : natural;
     begin
         if rising_edge(i_clk) then
-            -- 1st stage
-            stage_valid(0)              <= asi_ingress_valid;
-
-            gen_stages: for i in 0 to N_STAGES-1 loop -- number of stages: from 0 to 1
-                gen_nodes: for j in 0 to 2**(N_STAGES-i-1)-1 loop -- number of comparator at this stage: from 0 to 1 (i=0), from 0 to 0 (i=1)
-                    if (node(i)(j).value_i(0) < node(i)(j).value_i(1)) then 
-                        node(i)(j).value_o          <= node(i)(j).value_i(0);
-                        node(i)(j).index_o          <= node(i)(j).index_i(0);
-                    else
-                        node(i)(j).value_o          <= node(i)(j).value_i(1);
-                        node(i)(j).index_o          <= node(i)(j).index_i(1);
-                    end if;
+            if i_rst = '1' then
+                valid_pipe <= (others => '0');
+                for s in 0 to N_STAGES loop
+                    for e in 0 to N_POW2-1 loop
+                        stage_val(s)(e) <= (others => '0');
+                        stage_idx(s)(e) <= (others => '0');
+                    end loop;
                 end loop;
-            end loop;
+            else
+                valid_pipe(0) <= asi_ingress_valid;
 
-            gen_stage_flags : for i in 0 to N_STAGES-2 loop -- from 0 to 0
-                stage_valid(i+1)        <= stage_valid(i);
-            end loop;
+                if asi_ingress_valid = '1' then
+                    for e in 0 to N_POW2-1 loop
+                        if e < N_ELEMENT then
+                            stage_val(0)(e) <= unsigned(asi_ingress_data((e+1)*ELEMENT_SZ_BITS-1 downto e*ELEMENT_SZ_BITS));
+                            stage_idx(0)(e) <= to_unsigned(e, ELEMENT_INDEX_BITS);
+                        else
+                            if SEARCH_TARGET = "MAX" then
+                                stage_val(0)(e) <= (others => '0');
+                            else
+                                stage_val(0)(e) <= (others => '1');
+                            end if;
+                            stage_idx(0)(e) <= (others => '0');
+                        end if;
+                    end loop;
+                end if;
+
+                for s in 0 to N_STAGES-1 loop
+                    valid_pipe(s+1) <= valid_pipe(s);
+                    used := N_POW2 / (2**(s+1));
+                    for e in 0 to used-1 loop
+                        if SEARCH_TARGET = "MAX" then
+                            if stage_val(s)(2*e) >= stage_val(s)(2*e+1) then
+                                stage_val(s+1)(e) <= stage_val(s)(2*e);
+                                stage_idx(s+1)(e) <= stage_idx(s)(2*e);
+                            else
+                                stage_val(s+1)(e) <= stage_val(s)(2*e+1);
+                                stage_idx(s+1)(e) <= stage_idx(s)(2*e+1);
+                            end if;
+                        else
+                            if stage_val(s)(2*e) <= stage_val(s)(2*e+1) then
+                                stage_val(s+1)(e) <= stage_val(s)(2*e);
+                                stage_idx(s+1)(e) <= stage_idx(s)(2*e);
+                            else
+                                stage_val(s+1)(e) <= stage_val(s)(2*e+1);
+                                stage_idx(s+1)(e) <= stage_idx(s)(2*e+1);
+                            end if;
+                        end if;
+                    end loop;
+                end loop;
+            end if;
         end if;
     end process;
 
-    proc_tree_comparator_comb : process (all)
-    begin
-        gen_connection_1st : for j in 0 to 2**(N_STAGES-1)-1 loop -- number of comparator at first stage: from 0 to 1
-            for k in 0 to 1 loop
-                node(0)(j).value_i(k)            <= asi_ingress_data((2*j+k+1)*ELEMENT_SZ_BITS-1 downto (2*j+k)*ELEMENT_SZ_BITS);
-                node(0)(j).index_i(k)            <= std_logic_vector(to_unsigned(2*j + k, ELEMENT_INDEX_BITS)); -- the index is the position of the element in the array, from 0 to N_ELEMENT-1
-            end loop;
-        end loop;
-
-        gen_connection_mid : for i in 1 to N_STAGES-1 loop -- from 1 to 1
-            for j in 0 to 2**(N_STAGES-i-1)-1 loop -- number of comparator with input, from 0 to 0
-                node(i)(j).value_i(0)    <= node(i-1)(2*j).value_o;
-                node(i)(j).index_i(0)    <= node(i-1)(2*j).index_o;
-                node(i)(j).value_i(1)    <= node(i-1)(2*j+1).value_o;
-                node(i)(j).index_i(1)    <= node(i-1)(2*j+1).index_o;
-            end loop;
-        end loop;
-
-        -- last stage
-        aso_result_data                 <= node(N_STAGES-1)(0).value_o & node(N_STAGES-1)(0).index_o;
-        aso_result_valid                <= stage_valid(N_STAGES-1);
-    end process;
+    aso_result_data  <= std_logic_vector(stage_val(N_STAGES)(0)) & std_logic_vector(stage_idx(N_STAGES)(0));
+    aso_result_valid <= valid_pipe(N_STAGES);
 
 end architecture;
