@@ -287,6 +287,19 @@ add_interface csr avalon end
 set_interface_property csr addressUnits WORDS
 set_interface_property csr associatedClock datapath_clock
 set_interface_property csr associatedReset datapath_reset
+set_interface_property csr bitsPerSymbol 8
+set_interface_property csr burstOnBurstBoundariesOnly false
+set_interface_property csr burstcountUnits WORDS
+set_interface_property csr explicitAddressSpan 0
+set_interface_property csr holdTime 0
+set_interface_property csr linewrapBursts false
+set_interface_property csr maximumPendingReadTransactions 0
+set_interface_property csr maximumPendingWriteTransactions 0
+set_interface_property csr readLatency 1
+set_interface_property csr readWaitTime 1
+set_interface_property csr setupTime 0
+set_interface_property csr timingUnits Cycles
+set_interface_property csr writeWaitTime 0
 
 add_interface_port csr avs_csr_readdata readdata Output 32
 add_interface_port csr avs_csr_read read Input 1
@@ -419,5 +432,4 @@ set_interface_property debug_delay8loss dataBitsPerSymbol 16
 
 add_interface_port debug_delay8loss aso_debug_delay8loss_valid valid Output 1
 add_interface_port debug_delay8loss aso_debug_delay8loss_data data Output 16
-
 
