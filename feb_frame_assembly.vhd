@@ -1199,13 +1199,17 @@ begin
     
     proc_search_for_extreme_comb : process (all)
     begin
-        -- derive input signals
+        -- When a lane has no pending subframe head, mask it to the maximum
+        -- search value so TERMINATING can continue with the remaining lanes.
         for i in 0 to N_LANE-1 loop
-            search_for_extreme_in_data((i+1)*SEARCH_MIN_ELEMENT_SZ_BITS-1 downto i*SEARCH_MIN_ELEMENT_SZ_BITS)       <= (scheduler_overflow_flags(i) or scheduler_overflow_latched(i)) & std_logic_vector(showahead_timestamp(i));
+            if (showahead_timestamp_valid(i) = '1') then
+                search_for_extreme_in_data((i+1)*SEARCH_MIN_ELEMENT_SZ_BITS-1 downto i*SEARCH_MIN_ELEMENT_SZ_BITS)   <= (scheduler_overflow_flags(i) or scheduler_overflow_latched(i)) & std_logic_vector(showahead_timestamp(i));
+            else
+                search_for_extreme_in_data((i+1)*SEARCH_MIN_ELEMENT_SZ_BITS-1 downto i*SEARCH_MIN_ELEMENT_SZ_BITS)   <= (others => '1');
+            end if;
         end loop;
         
-    end process;                                                                              
-    
+    end process;
     
     -- e_search_for_extreme : entity work.search_for_extreme
     -- generic map (
@@ -1384,7 +1388,8 @@ begin
                             when IDLE =>
                                 null;
                             when POST => -- post: post lanes subh ts and start the subroutine by itself once subfifo all not empty 
-                                if (and_reduce(showahead_timestamp_valid) = '1') then 
+                                if ((x_run_state_cmd = RUNNING and and_reduce(showahead_timestamp_valid) = '1') or
+                                    (x_run_state_cmd /= RUNNING and or_reduce(showahead_timestamp_valid) = '1')) then 
                                     search_flow                     <= POST_ACK;
                                     search_for_extreme_in_valid     <= '1';
                                 end if;
@@ -1410,10 +1415,11 @@ begin
 					when IDLE =>
                         -- use the search engine result to grant the right lane and go to appropriate segment of the packet
                         if (header_generated = '0') then  
-                            if (and_reduce(showahead_timestamp_valid) = '1') then
+                            if ((x_run_state_cmd = RUNNING and and_reduce(showahead_timestamp_valid) = '1') or
+                                (x_run_state_cmd /= RUNNING and or_reduce(showahead_timestamp_valid) = '1')) then
                                 main_fifo_wr_status     <= START_OF_FRAME;
                             end if;
-                        elsif (header_generated = '1' and trailer_generated = '0' and x_run_state_cmd /= RUNNING) then
+                        elsif (header_generated = '1' and trailer_generated = '0' and x_run_state_cmd /= RUNNING and or_reduce(showahead_timestamp_valid) = '0') then
                             main_fifo_wr_status     <= END_OF_FRAME;
                         elsif (pipe_de2wr.eop_all = '1' and trailer_generated = '0') then 
                             -- end of frame: stop read subfifo, go to eof
@@ -1421,7 +1427,8 @@ begin
                             main_fifo_wr_status		<= END_OF_FRAME;
                         else 
                             -- between sof and eof: read subfifo for subheader + hits 
-                            if (and_reduce(showahead_timestamp_valid) = '1') then -- only when all lanes are valid. otherwise can have 1-255-0, 
+                            if ((x_run_state_cmd = RUNNING and and_reduce(showahead_timestamp_valid) = '1') or
+                                (x_run_state_cmd /= RUNNING and or_reduce(showahead_timestamp_valid) = '1')) then -- RUNNING compares a full lane-set; TERMINATING drains whatever lanes still have heads.
                                 main_fifo_wr_status             <= LOOK_AROUND;
                                 search_flow                   <= POST;
                                 --search_flow                     <= POST_ACK; -- jump to next state 
