@@ -17,6 +17,7 @@
 # 25.0.0710 - add debug interfaces
 # 25.0.0813 - support 128/256 subheader packets between two header packets
 # 26.0.0328 - add ts_delta debug stream and patched subfifo helper for feb_system_v2
+# 26.0.0516 - disable debug Avalon-ST sources when DEBUG=0
 
 ################################################
 # request TCL package from ACDS 16.1
@@ -40,6 +41,7 @@ set_module_property EDITABLE true
 set_module_property REPORT_TO_TALKBACK false
 set_module_property ALLOW_GREYBOX_GENERATION false
 set_module_property REPORT_HIERARCHY false
+set_module_property ELABORATION_CALLBACK elaborate
 
 
 ################################################
@@ -120,6 +122,7 @@ set_parameter_property DEBUG TYPE NATURAL
 set_parameter_property DEBUG UNITS None
 set_parameter_property DEBUG ALLOWED_RANGES {0 1 2}
 set_parameter_property DEBUG HDL_PARAMETER true
+set_parameter_property DEBUG AFFECTS_ELABORATION true
 set dscpt \
 "<html>
 Select the debug level of the IP (affects generation).<br>
@@ -433,3 +436,21 @@ set_interface_property debug_delay8loss dataBitsPerSymbol 16
 add_interface_port debug_delay8loss aso_debug_delay8loss_valid valid Output 1
 add_interface_port debug_delay8loss aso_debug_delay8loss_data data Output 16
 
+proc elaborate {} {
+    set debug_level [get_parameter_value DEBUG]
+    set debug_stream_enabled false
+    if {$debug_level >= 1} {
+        set debug_stream_enabled true
+    }
+
+    foreach iface {
+        debug_ts
+        debug_burst
+        ts_delta
+        debug_filllevel
+        debug_loss8fill
+        debug_delay8loss
+    } {
+        set_interface_property $iface ENABLED $debug_stream_enabled
+    }
+}
