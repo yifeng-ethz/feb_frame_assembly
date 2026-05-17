@@ -18,11 +18,14 @@
 # 25.0.0813 - support 128/256 subheader packets between two header packets
 # 26.0.0328 - add ts_delta debug stream and patched subfifo helper for feb_system_v2
 # 26.0.0516 - disable debug Avalon-ST sources when DEBUG=0
+# 26.0.0517 - lock the FEB/SWB frame contract to N_SHD=128
 
 ################################################
 # request TCL package from ACDS 16.1
 ################################################
 package require -exact qsys 16.1
+
+set FEB_N_SHD_REQUIRED_CONST 128
 
 
 ################################################
@@ -41,7 +44,15 @@ set_module_property EDITABLE true
 set_module_property REPORT_TO_TALKBACK false
 set_module_property ALLOW_GREYBOX_GENERATION false
 set_module_property REPORT_HIERARCHY false
+set_module_property VALIDATION_CALLBACK validate
 set_module_property ELABORATION_CALLBACK elaborate
+
+proc check_feb_n_shd {} {
+    set n_shd [get_parameter_value N_SHD]
+    if {$n_shd != 128} {
+        send_message error "FEB/SWB frame contract requires feb_frame_assembly.N_SHD=128; got N_SHD=$n_shd. This IP must not generate a 256-subheader FEB frame."
+    }
+}
 
 
 ################################################
@@ -99,17 +110,16 @@ This affects the stall time and latency of the output main frame, so you have to
 set_parameter_property INTERLEAVING_FACTOR LONG_DESCRIPTION $dscpt
 set_parameter_property INTERLEAVING_FACTOR DESCRIPTION $dscpt
 
-add_parameter N_SHD NATURAL 
-set_parameter_property N_SHD DEFAULT_VALUE 256
+add_parameter N_SHD NATURAL $FEB_N_SHD_REQUIRED_CONST
+set_parameter_property N_SHD DEFAULT_VALUE $FEB_N_SHD_REQUIRED_CONST
 set_parameter_property N_SHD DISPLAY_NAME "Number of Subheader Packets Between Header Packets"
 set_parameter_property N_SHD UNITS None
-set_parameter_property N_SHD ALLOWED_RANGES {128 256 512}
+set_parameter_property N_SHD ALLOWED_RANGES {128}
 set_parameter_property N_SHD HDL_PARAMETER true
 set dscpt \
 "<html>
-Enter the number of subheaders under one header packet, i.e., between two header packets. <br>
-More subheaders will be regarded as new header in track header = off mode. <br>
-Adjusting this parameter will require changing the code logic <br>
+The FEB/SWB frame contract is locked to <b>128</b> subheaders under one header packet. <br>
+Platform Designer validation emits a hard error for any other value to prevent 256-subheader FEB frames. <br>
 </html>"
 set_parameter_property N_SHD LONG_DESCRIPTION $dscpt
 set_parameter_property N_SHD DESCRIPTION $dscpt
@@ -436,7 +446,13 @@ set_interface_property debug_delay8loss dataBitsPerSymbol 16
 add_interface_port debug_delay8loss aso_debug_delay8loss_valid valid Output 1
 add_interface_port debug_delay8loss aso_debug_delay8loss_data data Output 16
 
+proc validate {} {
+    check_feb_n_shd
+}
+
 proc elaborate {} {
+    check_feb_n_shd
+
     set debug_level [get_parameter_value DEBUG]
     set debug_stream_enabled false
     if {$debug_level >= 1} {

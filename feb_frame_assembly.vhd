@@ -42,7 +42,7 @@ use ieee.std_logic_misc.or_reduce;
 entity feb_frame_assembly is
 generic (
 	INTERLEAVING_FACTOR				: natural := 4; -- set the same as upstream stack-cache 
-    N_SHD                           : natural := 256; -- number of subheader, e.g., 256 
+    N_SHD                           : natural := 128; -- FEB/SWB frame contract: 128 subheaders
 	DEBUG							: natural := 1
 );
 port (
@@ -1473,7 +1473,7 @@ begin
 								main_fifo_wr_valid					<= '1';
 							when 2 => -- data header 1
                                       -- ts [15:0] | package count [15:0]
-                                      -- for 256 N_SHD, only [31:28] is unmasked. for 128 N_SHD, only [31:27] is unmasked
+                                      -- FEB/SWB N_SHD is locked to 128, so only [31:27] is unmasked.
 								main_fifo_wr_data(31 downto 16)		<= gts_8n_in_transmission(15 downto 0); -- gts[47:12] (frame_cnt) : leading gts for this frame. while subframe contains gts[11:4], hits contains gts[3:0]
 								main_fifo_wr_data(20+TIMESTAMP_WIDTH-1 downto 16)          <= (others => '0'); -- explicitly mask to zeros (gts_8n_in_transmission is reference for its subheader and hits ts) 
                                                                                         -- ex: hit ts = gts_8n (ofst to mu3e global start-of-run) + subheader_ts (ofst to h.) + hit_ts (ofst to subh.)
@@ -2204,7 +2204,6 @@ begin
 
 
 end architecture rtl;
-
 
 
 
