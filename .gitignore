@@ -2,3 +2,4 @@
 *.bak
 greybox_tmp/
 .qsys_edit/
+tb/**/work/

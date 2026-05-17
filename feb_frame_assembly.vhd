@@ -284,10 +284,10 @@ architecture rtl of feb_frame_assembly is
 
 	
 	-- ------------------------------------
-	-- lane_scheduler (comb) TODO: test for 128
+	-- lane_scheduler (comb)
 	-- ------------------------------------
 	constant LANE_INDEX_WIDTH					: natural := integer(ceil(log2(real(INTERLEAVING_FACTOR)))); -- 2
-	constant SUBHEADER_TIMESTAMP_WIDTH			: natural := 8;
+	constant SUBHEADER_TIMESTAMP_WIDTH			: natural := integer(ceil(log2(real(N_SHD))));
     constant TIMESTAMP_WIDTH                   : natural := SUBHEADER_TIMESTAMP_WIDTH;
     -- constants
     constant N_LANE					    : natural := INTERLEAVING_FACTOR; -- 4
@@ -621,8 +621,8 @@ architecture rtl of feb_frame_assembly is
     -- debug timestamp (debug_ts)
     -- -------------------------------
     signal debug_ts_valid           : std_logic;
-    signal debug_ts_hdr             : std_logic_vector(35 downto 0);
-    signal debug_ts_subh            : std_logic_vector(7 downto 0);
+    signal debug_ts_hdr             : std_logic_vector(47 downto 4+TIMESTAMP_WIDTH);
+    signal debug_ts_subh            : std_logic_vector(TIMESTAMP_WIDTH-1 downto 0);
     signal debug_ts_hit             : std_logic_vector(3 downto 0);
     signal debug_ts_hit_global      : std_logic_vector(47 downto 0);
     
@@ -2081,7 +2081,7 @@ begin
                 -- update header ts (47 downto 12) 
                 -- --------------------------------
                 if (main_fifo_wr_status = START_OF_FRAME) then 
-                    debug_ts_hdr        <= gts_8n_in_transmission(47 downto 12);
+                    debug_ts_hdr        <= gts_8n_in_transmission(47 downto 4+TIMESTAMP_WIDTH);
                 end if;
                 
                 
@@ -2098,7 +2098,7 @@ begin
                         debug_ts_hit            <= main_fifo_din(31 downto 28);
                     else 
                         -- subheader
-                        debug_ts_subh           <= main_fifo_din(31 downto 24);
+                        debug_ts_subh           <= main_fifo_din(24+TIMESTAMP_WIDTH-1 downto 24);
                     end if;
                 end if;
                 
@@ -2204,8 +2204,6 @@ begin
 
 
 end architecture rtl;
-
-
 
 
 
